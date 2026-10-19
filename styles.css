@@ -45,3 +45,10 @@
 .activity-sep{width:24px;height:1px;background:#223049;margin:8px 0}
 @media(max-width:1060px){.ide-mode.app-shell{grid-template-columns:52px 205px minmax(0,1fr)}}
 @media(max-width:760px){.ide-mode.app-shell{grid-template-columns:48px minmax(0,1fr)}.activity-bar{padding:8px 0}.activity-btn{width:38px;height:38px;font-size:17px}}
+
+#media-canvas-stack{position:relative}
+#media-draw-canvas{position:absolute;inset:0;margin:auto;touch-action:none;cursor:crosshair}
+.draw-tools{margin:12px 0;border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#0b1426}
+.draw-tools summary{cursor:pointer;font-weight:600;font-size:12px;letter-spacing:.04em}
+.draw-tools .form-row{margin-top:10px;align-items:center;gap:12px;flex-wrap:wrap}
+.draw-tools input[type=color]{width:44px;height:30px;padding:2px;border:1px solid var(--line);border-radius:6px;background:#0e1830}

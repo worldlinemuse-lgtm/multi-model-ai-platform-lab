@@ -1,4 +1,5 @@
 import {imageGeometry,paintEditedImage} from './image-transform.js';
+import {BrushEngine,DEFAULT_SMOOTHING} from './draw.js';
 import {validateSpeechSettings,chooseVoice} from './speech-settings.js';
 import {MAX_SAVED_DATASETS,MAX_SAVED_DATASET_CHARS,validateSavedDatasets,transformDataset,serializeDataset,groupNumericStats} from './data-tools.js';
 export function parseCSV(text){const rows=[];let row=[],value='',quoted=false;for(let i=0;i<text.length;i++){const c=text[i];if(quoted){if(c==='"'&&text[i+1]==='"'){value+='"';i++;}else if(c==='"')quoted=false;else value+=c;}else if(c==='"')quoted=true;else if(c===','){row.push(value);value='';}else if(c==='\n'){row.push(value.replace(/\r$/,''));if(row.some(x=>x.trim()))rows.push(row);row=[];value='';}else value+=c;}if(quoted)throw Error('Unclosed quoted CSV field');row.push(value.replace(/\r$/,''));if(row.some(x=>x.trim()))rows.push(row);if(!rows.length)throw Error('Empty dataset');const columns=rows.shift().map((x,i)=>x||`Column ${i+1}`);if(columns.length>50||rows.length>3000)throw Error('Limit: 50 columns, 3,000 rows');return {columns,records:rows.map(r=>Object.fromEntries(columns.map((col,i)=>[col,r[i]??''])))};}
@@ -112,7 +113,55 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
  });
  $('data-wasm-test').addEventListener('click',async()=>{try{const bytes=new Uint8Array([0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]);const instance=await WebAssembly.instantiate(bytes);const sum=instance.instance.exports.add(20,22);$('data-status').textContent=`WebAssembly execution: PASS\n20 + 22 = ${sum}\nNative browser WebAssembly runtime is available.`;toast('WebAssembly test passed.');}catch(e){toast('WebAssembly failed: '+e.message,true)}});
  const canvas=$('media-canvas'),ctx=canvas.getContext('2d');
+ const drawCanvas=$('media-draw-canvas');
+ const brush = drawCanvas ? new BrushEngine(drawCanvas) : null;
+ function syncDrawLayer(){
+  if(!brush||!canvas.width) return;
+  // Match the draw layer to the image canvas pixel size, then position it over the displayed image.
+  if(drawCanvas.width!==canvas.width||drawCanvas.height!==canvas.height) brush.resize(canvas.width,canvas.height);
+  const r=canvas.getBoundingClientRect();
+  drawCanvas.style.width=r.width+'px'; drawCanvas.style.height=r.height+'px';
+ }
  let activePreset='';
+ // --- Drawing controls ---
+ function canvasPoint(e){
+  const r=drawCanvas.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*(drawCanvas.width/r.width), y:(e.clientY-r.top)*(drawCanvas.height/r.height), p:e.pressure||0.5 };
+ }
+ if(brush){
+  drawCanvas.addEventListener('pointerdown',e=>{
+   if(!selectedImage) return toast('Load an image first, then draw.',true);
+   drawCanvas.setPointerCapture(e.pointerId);
+   const pt=canvasPoint(e); brush.beginStroke(pt.x,pt.y,pt.p);
+   e.preventDefault();
+  });
+  drawCanvas.addEventListener('pointermove',e=>{
+   if(!brush.drawing) return;
+   const pt=canvasPoint(e); brush.moveStroke(pt.x,pt.y,pt.p);
+   e.preventDefault();
+  });
+  for(const ev of ['pointerup','pointercancel']) drawCanvas.addEventListener(ev,()=>{
+   if(!brush.drawing) return;
+   brush.endStroke(); $('draw-undo-stroke').disabled = brush.strokes.length===0;
+  });
+  for(const b of document.querySelectorAll('#draw-presets .preset-btn')) b.addEventListener('click',()=>{
+   brush.setPreset(b.dataset.brush);
+   for(const x of document.querySelectorAll('#draw-presets .preset-btn')) x.classList.toggle('active',x===b);
+  });
+  $('draw-color')?.addEventListener('input',e=>{ brush.color=e.target.value; });
+  $('draw-size')?.addEventListener('input',e=>{ brush.size=Number(e.target.value); $('draw-size-val').textContent=e.target.value; });
+  $('draw-opacity')?.addEventListener('input',e=>{ brush.opacity=Number(e.target.value)/100; $('draw-opacity-val').textContent=e.target.value; });
+  $('draw-smoothing')?.addEventListener('change',e=>{
+   const def = DEFAULT_SMOOTHING[brush.preset.name] ?? 0.3;
+   brush.preset = {...brush.preset, smoothing: e.target.checked ? def : 0};
+  });
+  $('draw-undo-stroke')?.addEventListener('click',()=>{
+   if(brush.undo()){ $('draw-undo-stroke').disabled = brush.strokes.length===0; }
+  });
+  $('draw-clear')?.addEventListener('click',()=>{
+   brush.clear(); $('draw-undo-stroke').disabled = brush.strokes.length===0; toast('Drawing cleared.');
+  });
+ }
 function currentFilter(){const blur=Number($('media-blur')?.value||0);let f=`brightness(${$('media-brightness').value}%) contrast(${$('media-contrast').value}%) saturate(${$('media-saturation').value}%)`;if(blur>0)f+=` blur(${blur}px)`;if(activePreset)f+=` ${activePreset}`;return f;}
  function editOptions(original=false){return {rotation,cropPercent,original};}
  function renderImageTo(outCtx,original=false){return paintEditedImage(outCtx,selectedImage,editOptions(original),currentFilter());}
@@ -120,6 +169,7 @@ function currentFilter(){const blur=Number($('media-blur')?.value||0);let f=`bri
   if(!selectedImage)return;
   try{
    const spec=renderImageTo(ctx);
+   syncDrawLayer();
    $('media-resolution-status').textContent=`Preview: ${spec.width} × ${spec.height}px · Original: ${selectedImage.naturalWidth} × ${selectedImage.naturalHeight}px · Cropped source: ${spec.sw} × ${spec.sh}px · Export at ${$('media-original-resolution').checked?'original':'preview'} resolution · Rotation: ${rotation}°.`;
    if($('media-vignette')?.checked){const w=canvas.width,h=canvas.height;const g=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*0.35,w/2,h/2,Math.max(w,h)*0.75);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,0.55)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);}
    $('media-undo').disabled=imageUndo.length===0;
@@ -133,7 +183,9 @@ function currentFilter(){const blur=Number($('media-blur')?.value||0);let f=`bri
   img.onload=()=>{
    URL.revokeObjectURL(url);
    try{imageGeometry(img.naturalWidth,img.naturalHeight,{original:true});}catch(error){return toast('Image rejected: '+String(error?.message||error),true);}
-   selectedImage=img;rotation=0;cropPercent=0;imageUndo=[];$('media-crop').value=0;redrawImage();toast('Image loaded locally.');
+   selectedImage=img;rotation=0;cropPercent=0;imageUndo=[];$('media-crop').value=0;
+   if(brush){ brush.ctx.clearRect(0,0,drawCanvas.width,drawCanvas.height); brush.strokes=[]; brush.dabCount=0; const ub=$('draw-undo-stroke'); if(ub) ub.disabled=true; }
+   redrawImage();toast('Image loaded locally.');
   };
   img.onerror=()=>{URL.revokeObjectURL(url);toast('Unable to read image.',true)};
   img.src=url;
@@ -158,6 +210,7 @@ if(cmp){const showOrig=on=>{if(!selectedImage)return;try{if(on){const keep=ctx.f
  $('media-reset').addEventListener('click',()=>{
   if(selectedImage)saveImageStep();
   rotation=0;cropPercent=0;$('media-crop').value=0;
+  if(brush){ brush.ctx.clearRect(0,0,drawCanvas.width,drawCanvas.height); brush.strokes=[]; brush.dabCount=0; const ub=$('draw-undo-stroke'); if(ub) ub.disabled=true; }
   for(const id of ['media-brightness','media-contrast','media-saturation'])$(id).value=100;
   activePreset='';for(const x of document.querySelectorAll('#media-presets .preset-btn'))x.classList.toggle('active',x.dataset.preset==='');const bl=$('media-blur');if(bl)bl.value=0;const vg=$('media-vignette');if(vg)vg.checked=false;redrawImage();
  });
@@ -169,6 +222,20 @@ if(cmp){const showOrig=on=>{if(!selectedImage)return;try{if(on){const keep=ctx.f
    output=document.createElement('canvas');
    const outCtx=output.getContext('2d');if(!outCtx)return toast('Cannot allocate full-resolution export.',true);
    try{renderImageTo(outCtx,true);}catch(error){return toast('Image export blocked: '+String(error?.message||error),true);}
+  }
+  // Composite the drawing layer onto the export.
+  if(brush && drawCanvas.width>0){
+   const hasDrawing = brush.dabCount>0 || brush.strokes.length>0;
+   if(hasDrawing){
+    if(output===canvas){
+     output=document.createElement('canvas');
+     output.width=canvas.width; output.height=canvas.height;
+     output.getContext('2d').drawImage(canvas,0,0);
+    }
+    const octx=output.getContext('2d');
+    // Scale drawing to output size (matches preview unless original-res export).
+    octx.drawImage(drawCanvas,0,0,output.width,output.height);
+   }
   }
   output.toBlob(blob=>{if(blob)download('edited-image.png',blob,'image/png');else toast('Image export failed: try preview-size export.',true);},'image/png');
  });
