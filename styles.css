@@ -6,6 +6,12 @@
 .draw-tools input[type=color]{width:52px;height:44px}
 .draw-tools select{min-height:44px;font-size:14px}
 .draw-tools summary{padding:10px 4px;font-size:13px}
+/* Fat slider thumbs for touch */
+.surface-card input[type=range]{height:44px}
+.surface-card input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:28px;height:28px;border-radius:50%;background:var(--accent);border:2px solid #0b1426;margin-top:-12px}
+.surface-card input[type=range]::-webkit-slider-runnable-track{height:4px;background:#30405c;border-radius:2px}
+.surface-card input[type=range]::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:var(--accent);border:2px solid #0b1426}
+.surface-card input[type=range]::-moz-range-track{height:4px;background:#30405c;border-radius:2px}
 /* Draw canvas: full-width on mobile, prevent gesture interference */
 #media-canvas-stack{margin:12px -4px}
 #media-draw-canvas{touch-action:none;-webkit-user-select:none;user-select:none}
