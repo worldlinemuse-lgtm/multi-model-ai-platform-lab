@@ -61,7 +61,7 @@ export const FLOW_TEMPLATES = Object.freeze({
  explain:['Explain concept','Challenge assumptions','Refine explanation']
 });
 export function uid(prefix='id'){return `${prefix}-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`;}
-export const clone = value => JSON.parse(JSON.stringify(value));
+export const clone = value => { try{ return JSON.parse(JSON.stringify(value)); }catch{ return null; } };
 export const now = () => new Date().toISOString();
 export const providerById = id => PROVIDERS.find(p=>p.id===id);
 export function safeName(name){return typeof name==='string' && name.length<=100 && /^[\p{L}\p{N}_-][\p{L}\p{N}_.+@ /-]*$/u.test(name) && !name.endsWith('/') && name.split('/').every(part=>part.length>0&&part!=='.'&&part!=='..'&&!part.startsWith('.'));}
@@ -98,6 +98,6 @@ export function historyForRoute(messages,route){
  return messages.filter(m=>m && (m.role==='user'||(m.role==='assistant'&&m.provider===route&&!m.error)))
   .slice(-10).map(m=>({role:m.role,content:m.content}));
 }
-export function migrateLegacy(source){if(!source||!safeFiles(source.files)||!Object.hasOwn(source.files,source.active))throw Error('Cannot migrate invalid legacy project');const state=freshState();state.projects[0].files=clone(source.files);state.projects[0].active=source.active;state.projects[0].name='Recovered B0.2 project';return state;}
+export function migrateLegacy(source){if(!source||!safeFiles(source.files)||!Object.hasOwn(source.files,source.active))throw Error('Cannot migrate invalid legacy project');const state=freshState();const migratedFiles=clone(source.files);if(!migratedFiles)throw Error('Cannot migrate: legacy file data is not serializable');state.projects[0].files=migratedFiles;state.projects[0].active=source.active;state.projects[0].name='Recovered B0.2 project';return state;}
 export function csvSummary(text){const rows=text.trim().split(/\r?\n/).filter(Boolean);if(!rows.length)return 'Empty CSV';return `${rows.length} rows · ${rows[0].split(',').length} columns\nHeaders: ${rows[0].slice(0,400)}`;}
 export function routeDescription(connected){return `${connected} / ${PROVIDERS.length}`;}
