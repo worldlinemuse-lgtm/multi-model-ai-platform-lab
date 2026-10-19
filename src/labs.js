@@ -129,19 +129,63 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   return { x:(e.clientX-r.left)*(drawCanvas.width/r.width), y:(e.clientY-r.top)*(drawCanvas.height/r.height), p:e.pressure||0.5 };
  }
  if(brush){
+  let lastStrokeEnd=null;
   drawCanvas.addEventListener('pointerdown',e=>{
    if(!selectedImage) return toast('Load an image first, then draw.',true);
+   const pt=canvasPoint(e);
+   // Alt+click: sample color from the photo (eyedropper).
+   if(e.altKey){
+     try{
+       const sx=Math.max(0,Math.min(canvas.width-1,Math.round(pt.x)));
+       const sy=Math.max(0,Math.min(canvas.height-1,Math.round(pt.y)));
+       const d=ctx.getImageData(sx,sy,1,1).data;
+       const hex='#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+       brush.color=hex; const cp=$('draw-color'); if(cp) cp.value=hex;
+       toast('Color sampled: '+hex);
+     }catch{ toast('Could not sample color.',true); }
+     return;
+   }
    drawCanvas.setPointerCapture(e.pointerId);
-   const pt=canvasPoint(e); brush.beginStroke(pt.x,pt.y,pt.p);
+   // Shift+click: straight line from end of last stroke.
+   if(e.shiftKey && lastStrokeEnd && !brush.preset.smudge && !brush.preset.blur && !brush.preset.eraser){
+     brush.beginStroke(lastStrokeEnd.x,lastStrokeEnd.y,0.5);
+     const dx=pt.x-lastStrokeEnd.x, dy=pt.y-lastStrokeEnd.y;
+     const dist=Math.hypot(dx,dy), size=brush._size(0.5);
+     const step=Math.max(size*brush.preset.spacing,0.75);
+     const n=Math.max(1,Math.floor(dist/step));
+     for(let i=1;i<=n;i++) brush._dab(lastStrokeEnd.x+dx*(i/n), lastStrokeEnd.y+dy*(i/n), 0.5);
+     brush.endStroke();
+     lastStrokeEnd={x:pt.x,y:pt.y};
+     $('draw-undo-stroke').disabled=false;
+     return;
+   }
+   brush.beginStroke(pt.x,pt.y,pt.p);
+   lastStrokeEnd={x:pt.x,y:pt.y};
    e.preventDefault();
   });
+  const brushCursor=$('brush-cursor'), brushRing=brushCursor?.querySelector('.brush-ring');
+  function updateBrushCursor(clientX,clientY){
+   if(!brushCursor||!brushRing||!canvas.width) return;
+   const stack=$('media-canvas-stack');
+   const sr=stack.getBoundingClientRect(), cr=canvas.getBoundingClientRect();
+   const scale=cr.width/canvas.width;
+   const d=Math.max(6, brush.cursorSize()*scale);
+   brushRing.style.width=d+'px'; brushRing.style.height=d+'px';
+   brushRing.classList.toggle('soft', brush.preset.tip==='soft');
+   brushCursor.style.display='block';
+   brushCursor.style.left=(clientX-sr.left)+'px';
+   brushCursor.style.top=(clientY-sr.top)+'px';
+  }
   drawCanvas.addEventListener('pointermove',e=>{
+   updateBrushCursor(e.clientX,e.clientY);
    if(!brush.drawing) return;
    const pt=canvasPoint(e); brush.moveStroke(pt.x,pt.y,pt.p);
    e.preventDefault();
   });
-  for(const ev of ['pointerup','pointercancel']) drawCanvas.addEventListener(ev,()=>{
+  drawCanvas.addEventListener('pointerleave',()=>{ if(brushCursor) brushCursor.style.display='none'; });
+  for(const ev of ['pointerup','pointercancel']) drawCanvas.addEventListener(ev,e=>{
    if(!brush.drawing) return;
+   const pt=canvasPoint(e); lastStrokeEnd={x:pt.x,y:pt.y};
    brush.endStroke(); $('draw-undo-stroke').disabled = brush.strokes.length===0;
   });
   for(const b of document.querySelectorAll('#draw-presets .preset-btn')) b.addEventListener('click',()=>{
@@ -163,6 +207,24 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   });
   $('draw-clear')?.addEventListener('click',()=>{
    brush.clear(); $('draw-undo-stroke').disabled = brush.strokes.length===0; toast('Drawing cleared.');
+  });
+  // Photoshop-style shortcuts: [ ] brush size, 1..0 opacity. Active when the media
+  // view is shown and focus isn't in a text field.
+  document.addEventListener('keydown',e=>{
+   if($('view-media')?.hidden) return;
+   const t=e.target;
+   if(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable)) return;
+   if(e.key==='['||e.key===']'){
+     const sz=$('draw-size'); if(!sz) return;
+     sz.value=Math.max(1,Math.min(120,Number(sz.value)+(e.key===']'?2:-2)));
+     sz.dispatchEvent(new Event('input'));
+     e.preventDefault();
+   } else if(/^[0-9]$/.test(e.key)){
+     const op=$('draw-opacity'); if(!op) return;
+     op.value=e.key==='0'?100:Number(e.key)*10;
+     op.dispatchEvent(new Event('input'));
+     e.preventDefault();
+   }
   });
  }
 function currentFilter(){const blur=Number($('media-blur')?.value||0);let f=`brightness(${$('media-brightness').value}%) contrast(${$('media-contrast').value}%) saturate(${$('media-saturation').value}%)`;if(blur>0)f+=` blur(${blur}px)`;if(activePreset)f+=` ${activePreset}`;return f;}

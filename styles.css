@@ -52,3 +52,9 @@
 .draw-tools summary{cursor:pointer;font-weight:600;font-size:12px;letter-spacing:.04em}
 .draw-tools .form-row{margin-top:10px;align-items:center;gap:12px;flex-wrap:wrap}
 .draw-tools input[type=color]{width:44px;height:30px;padding:2px;border:1px solid var(--line);border-radius:6px;background:#0e1830}
+
+#media-draw-canvas{cursor:none}
+#brush-cursor{position:absolute;pointer-events:none;display:none;z-index:5;transform:translate(-50%,-50%)}
+#brush-cursor .brush-ring{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.9);border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.55),inset 0 0 0 1px rgba(0,0,0,.35)}
+#brush-cursor .brush-dot{position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.6)}
+#brush-cursor .brush-ring.soft::after{content:'';position:absolute;inset:18%;border:1px dashed rgba(255,255,255,.45);border-radius:50%}

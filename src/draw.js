@@ -8,6 +8,7 @@ export const BRUSH_PRESETS = {  pencil:  { name:'Pencil',     tip:'hard',   size
   soft:    { name:'Soft brush', tip:'soft',   sizeMul:3,   opacityMul:0.35,flow:0.5, spacing:0.06, smoothing:0.4,  pressureSize:true,  pressureOpacity:true,  eraser:false },
   eraser:  { name:'Eraser',     tip:'soft',   sizeMul:2.5, opacityMul:1,   flow:1,   spacing:0.08, smoothing:0.3,  pressureSize:true,  pressureOpacity:false, eraser:true },
   smudge:  { name:'Smudge',     tip:'soft',   sizeMul:2,   opacityMul:0.5,  flow:0.6, spacing:0.05, smoothing:0.35, pressureSize:true,  pressureOpacity:false, eraser:false, smudge:true },
+  blur:    { name:'Blur',       tip:'soft',   sizeMul:2,   opacityMul:0.7,  flow:0.8, spacing:0.06, smoothing:0.3,  pressureSize:true,  pressureOpacity:false, eraser:false, blur:3 },
 };
 
 export const BLEND_MODES = ['source-over','multiply','screen','overlay','darken','lighten','color-dodge','color-burn','hard-light','soft-light','difference','exclusion','hue','saturation','color','luminosity'];
@@ -99,12 +100,50 @@ export class BrushEngine {
     }
   }
   endStroke(){ this.drawing = false; this.tip = null; }
-  _size(pressure){
+  // Effective brush diameter in canvas pixels (for the cursor ring).
+  cursorSize(){
+    return Math.max(1, this.size * this.preset.sizeMul);
+  }
+    _blurDab(x,y,pressure){
+    const p=this.preset, ctx=this.ctx, src=this.sampleSource;
+    const size=this._size(pressure);
+    const r=size/2;
+    // Grab the region under the dab from the photo.
+    const sx=Math.max(0,Math.round(x-r)), sy=Math.max(0,Math.round(y-r));
+    const sw=Math.min(src.width-sx, Math.round(size)), sh=Math.min(src.height-sy, Math.round(size));
+    if(sw<=0||sh<=0) return;
+    const tmp=document.createElement('canvas'); tmp.width=sw; tmp.height=sh;
+    const tctx=tmp.getContext('2d');
+    // Composite photo + existing drawing so blur affects the visible result.
+    tctx.drawImage(src,sx,sy,sw,sh,0,0,sw,sh);
+    tctx.drawImage(this.canvas,sx,sy,sw,sh,0,0,sw,sh);
+    // Blur and stamp back with brush alpha + soft falloff.
+    const pr=p.pressureOpacity?(0.3+0.7*(pressure||0.5)):1;
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,this.opacity*p.opacityMul*p.flow*pr);
+    ctx.filter=`blur(${p.blur}px)`;
+    // Soft circular mask: draw blurred region through a radial alpha mask.
+    const mask=document.createElement('canvas'); mask.width=sw; mask.height=sh;
+    const mctx=mask.getContext('2d');
+    const g=mctx.createRadialGradient(sw/2,sh/2,0,sw/2,sh/2,sw/2);
+    g.addColorStop(0,'rgba(0,0,0,1)'); g.addColorStop(0.7,'rgba(0,0,0,1)'); g.addColorStop(1,'rgba(0,0,0,0)');
+    mctx.fillStyle=g; mctx.fillRect(0,0,sw,sh);
+    tctx.globalCompositeOperation='destination-in';
+    tctx.drawImage(mask,0,0);
+    ctx.drawImage(tmp,sx,sy);
+    ctx.restore();
+  }
+    _size(pressure){
     const p = this.preset;
     const pr = p.pressureSize ? (0.25 + 0.75*(pressure||0.5)) : 1;
     return Math.max(1, this.size * p.sizeMul * pr);
   }
   _dab(x,y,pressure){
+    if(this.preset.blur && this.sampleSource && this.sampleSource.width>0){
+      this._blurDab(x,y,pressure);
+      this.dabCount++;
+      return;
+    }
     const p = this.preset, ctx = this.ctx;
     const size = this._size(pressure);
     const pr = p.pressureOpacity ? (0.3 + 0.7*(pressure||0.5)) : 1;

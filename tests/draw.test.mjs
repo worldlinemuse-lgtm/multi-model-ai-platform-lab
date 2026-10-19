@@ -4,7 +4,7 @@ import {BRUSH_PRESETS,DEFAULT_SMOOTHING,BLEND_MODES} from '../src/draw.js';
 
 test('five brush presets defined as data',()=>{
   const ids=Object.keys(BRUSH_PRESETS);
-  assert.deepEqual(ids,['pencil','ink','marker','soft','eraser','smudge']);
+  assert.deepEqual(ids,['pencil','ink','marker','soft','eraser','smudge','blur']);
   for(const [id,p] of Object.entries(BRUSH_PRESETS)){
     assert.ok(p.name, id+' has name');
     assert.ok(['hard','soft'].includes(p.tip), id+' tip kind');
@@ -43,4 +43,9 @@ test('16 blend modes including normal',()=>{
 test('smudge preset samples rather than paints fixed color',()=>{
   assert.equal(BRUSH_PRESETS.smudge.smudge, true);
   assert.ok(!Object.values(BRUSH_PRESETS).filter(p=>p!==BRUSH_PRESETS.smudge).some(p=>p.smudge));
+});
+
+test('blur preset carries a blur radius',()=>{
+  assert.ok(BRUSH_PRESETS.blur.blur>0, 'blur radius set');
+  assert.ok(!Object.values(BRUSH_PRESETS).filter(p=>p!==BRUSH_PRESETS.blur).some(p=>p.blur));
 });
