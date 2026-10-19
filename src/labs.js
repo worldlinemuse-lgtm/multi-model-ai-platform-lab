@@ -3,7 +3,21 @@ import {BrushEngine,DEFAULT_SMOOTHING} from './draw.js';
 import {validateSpeechSettings,chooseVoice} from './speech-settings.js';
 import {MAX_SAVED_DATASETS,MAX_SAVED_DATASET_CHARS,validateSavedDatasets,transformDataset,serializeDataset,groupNumericStats} from './data-tools.js';
 export function parseCSV(text){const rows=[];let row=[],value='',quoted=false;for(let i=0;i<text.length;i++){const c=text[i];if(quoted){if(c==='"'&&text[i+1]==='"'){value+='"';i++;}else if(c==='"')quoted=false;else value+=c;}else if(c==='"')quoted=true;else if(c===','){row.push(value);value='';}else if(c==='\n'){row.push(value.replace(/\r$/,''));if(row.some(x=>x.trim()))rows.push(row);row=[];value='';}else value+=c;}if(quoted)throw Error('Unclosed quoted CSV field');row.push(value.replace(/\r$/,''));if(row.some(x=>x.trim()))rows.push(row);if(!rows.length)throw Error('Empty dataset');const columns=rows.shift().map((x,i)=>x||`Column ${i+1}`);if(columns.length>50||rows.length>3000)throw Error('Limit: 50 columns, 3,000 rows');return {columns,records:rows.map(r=>Object.fromEntries(columns.map((col,i)=>[col,r[i]??''])))};}
-export function parseDataset(text){if(!text||text.length>2_000_000)throw Error('Dataset must be under 2 MB');const t=text.trim();if(t.startsWith('[')||t.startsWith('{')){const v=JSON.parse(t);const arr=Array.isArray(v)?v:Array.isArray(v.data)?v.data:[v];if(arr.length>3000)throw Error('Maximum 3,000 JSON rows');const records=arr.map(x=>typeof x==='object'&&x!==null&&!Array.isArray(x)?x:{value:x});const columns=Array.from(new Set(records.flatMap(x=>Object.keys(x)))).slice(0,50);return {columns,records};}return parseCSV(t);}
+function maxDepth(value,limit=100){
+ // Iterative depth check — recursion here would be the vulnerability.
+ let max=0;const stack=[[value,1]];
+ while(stack.length){
+  const [v,d]=stack.pop();
+  if(d>limit)return d;
+  if(d>max)max=d;
+  if(v&&typeof v==='object'){
+   if(Array.isArray(v)){for(let i=0;i<v.length;i++)stack.push([v[i],d+1]);}
+   else{for(const k of Object.keys(v))stack.push([v[k],d+1]);}
+  }
+ }
+ return max;
+}
+export function parseDataset(text){if(!text||text.length>2_000_000)throw Error('Dataset must be under 2 MB');const t=text.trim();if(t.startsWith('[')||t.startsWith('{')){const v=JSON.parse(t);if(maxDepth(v)>100)throw Error('JSON nesting exceeds 100 levels');const arr=Array.isArray(v)?v:Array.isArray(v.data)?v.data:[v];if(arr.length>3000)throw Error('Maximum 3,000 JSON rows');const records=arr.map(x=>typeof x==='object'&&x!==null&&!Array.isArray(x)?x:{value:x});const columns=Array.from(new Set(records.flatMap(x=>Object.keys(x)))).slice(0,50);return {columns,records};}return parseCSV(t);}
 export function numericValue(value){
  if(value===null||value===undefined||typeof value==='boolean')return null;
  if(typeof value==='string'&&value.trim()==='')return null;
