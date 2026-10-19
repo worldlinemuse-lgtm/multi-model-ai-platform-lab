@@ -112,7 +112,8 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
  });
  $('data-wasm-test').addEventListener('click',async()=>{try{const bytes=new Uint8Array([0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]);const instance=await WebAssembly.instantiate(bytes);const sum=instance.instance.exports.add(20,22);$('data-status').textContent=`WebAssembly execution: PASS\n20 + 22 = ${sum}\nNative browser WebAssembly runtime is available.`;toast('WebAssembly test passed.');}catch(e){toast('WebAssembly failed: '+e.message,true)}});
  const canvas=$('media-canvas'),ctx=canvas.getContext('2d');
- function currentFilter(){return `brightness(${$('media-brightness').value}%) contrast(${$('media-contrast').value}%) saturate(${$('media-saturation').value}%)`;}
+ let activePreset='';
+function currentFilter(){const blur=Number($('media-blur')?.value||0);let f=`brightness(${$('media-brightness').value}%) contrast(${$('media-contrast').value}%) saturate(${$('media-saturation').value}%)`;if(blur>0)f+=` blur(${blur}px)`;if(activePreset)f+=` ${activePreset}`;return f;}
  function editOptions(original=false){return {rotation,cropPercent,original};}
  function renderImageTo(outCtx,original=false){return paintEditedImage(outCtx,selectedImage,editOptions(original),currentFilter());}
  function redrawImage(){
@@ -120,6 +121,7 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   try{
    const spec=renderImageTo(ctx);
    $('media-resolution-status').textContent=`Preview: ${spec.width} × ${spec.height}px · Original: ${selectedImage.naturalWidth} × ${selectedImage.naturalHeight}px · Cropped source: ${spec.sw} × ${spec.sh}px · Export at ${$('media-original-resolution').checked?'original':'preview'} resolution · Rotation: ${rotation}°.`;
+   if($('media-vignette')?.checked){const w=canvas.width,h=canvas.height;const g=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*0.35,w/2,h/2,Math.max(w,h)*0.75);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,0.55)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);}
    $('media-undo').disabled=imageUndo.length===0;
   }catch(error){$('media-resolution-status').textContent='Image update failed: '+String(error?.message||error);toast('Image update rejected.',true);}
  }
@@ -136,7 +138,11 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   img.onerror=()=>{URL.revokeObjectURL(url);toast('Unable to read image.',true)};
   img.src=url;
  });
- for(const id of ['media-brightness','media-contrast','media-saturation'])$(id).addEventListener('input',redrawImage);
+ for(const id of ['media-brightness','media-contrast','media-saturation','media-blur'])$(id)?.addEventListener('input',redrawImage);
+$('media-vignette')?.addEventListener('change',redrawImage);
+for(const b of document.querySelectorAll('#media-presets .preset-btn'))b.addEventListener('click',()=>{activePreset=b.dataset.preset;for(const x of document.querySelectorAll('#media-presets .preset-btn'))x.classList.toggle('active',x===b);redrawImage();});
+const cmp=$('media-compare');
+if(cmp){const showOrig=on=>{if(!selectedImage)return;try{if(on){const keep=ctx.filter;ctx.filter='none';paintEditedImage(ctx,selectedImage,{rotation:0,cropPercent:0,original:false},'brightness(100%) contrast(100%) saturate(100%)');ctx.filter=keep;}else redrawImage();}catch{}};cmp.addEventListener('pointerdown',()=>showOrig(true));for(const ev of ['pointerup','pointerleave','pointercancel'])cmp.addEventListener(ev,()=>showOrig(false));}
  $('media-crop').addEventListener('change',()=>{
   if(!selectedImage)return;
   const desired=Number($('media-crop').value);
@@ -153,7 +159,7 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   if(selectedImage)saveImageStep();
   rotation=0;cropPercent=0;$('media-crop').value=0;
   for(const id of ['media-brightness','media-contrast','media-saturation'])$(id).value=100;
-  redrawImage();
+  activePreset='';for(const x of document.querySelectorAll('#media-presets .preset-btn'))x.classList.toggle('active',x.dataset.preset==='');const bl=$('media-blur');if(bl)bl.value=0;const vg=$('media-vignette');if(vg)vg.checked=false;redrawImage();
  });
  $('media-original-resolution').addEventListener('change',redrawImage);
  $('media-download').addEventListener('click',()=>{
@@ -172,7 +178,8 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   const keep=voices.value;voices.replaceChildren(new Option('Browser default',''));
   if(!('speechSynthesis' in window)){$('speech-voices-status').textContent='Speech synthesis unavailable.';return;}
   const list=speechSynthesis.getVoices();
-  for(const v of list)voices.add(new Option(v.name+' ('+v.lang+')',v.voiceURI));
+  const byLang={};for(const v of list){const l=(v.lang||'unknown').split('-')[0];(byLang[l]=byLang[l]||[]).push(v);}
+  for(const l of Object.keys(byLang).sort()){const grp=document.createElement('optgroup');grp.label=l.toUpperCase();for(const v of byLang[l])grp.append(new Option(v.name+(v.localService?' · local':' · network'),v.voiceURI));voices.add(grp);}
   if([...voices.options].some(o=>o.value===keep))voices.value=keep;
   $('speech-voices-status').textContent=list.length+' browser-reported voice(s). Availability and privacy depend on your browser.';
  }
@@ -188,15 +195,19 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   if(options.voiceURI&&!chosen)return toast('Selected browser voice is no longer available.',true);
   speechSynthesis.cancel();
   const utterance=new SpeechSynthesisUtterance(text.slice(0,2000));utterance.rate=options.rate;utterance.pitch=options.pitch;if(chosen)utterance.voice=chosen;
-  utterance.onend=()=>$('speech-status').textContent='Finished speaking.';
-  utterance.onerror=e=>$('speech-status').textContent='Speech error: '+String(e.error||'unknown');
-  speechSynthesis.speak(utterance);$('speech-status').textContent='Speaking through '+(chosen?.name||'browser default voice')+'…';
+  const ta=$('speech-text');let hl=null;
+  utterance.onboundary=e=>{if(e.charIndex==null||!ta)return;try{if(!hl){hl=document.createElement('div');hl.id='speech-highlight';ta.parentNode.insertBefore(hl,ta);hl.style.cssText='position:absolute;inset:0;pointer-events:none;font:inherit;padding:10px 12px;white-space:pre-wrap;word-break:break-word;color:transparent';ta.parentNode.style.position='relative';}const text=ta.value;const before=text.slice(0,e.charIndex);const word=text.slice(e.charIndex,e.charIndex+(e.charLength||1));const after=text.slice(e.charIndex+(e.charLength||1));hl.innerHTML='';hl.append(document.createTextNode(before));const mark=document.createElement('mark');mark.style.background='#75d8f555';mark.textContent=word;hl.append(mark);hl.append(document.createTextNode(after));}catch{}};
+  const clearHl=()=>{if(hl){hl.remove();hl=null;}};
+  utterance.onend=()=>{clearHl();$('speech-status').textContent='Finished speaking.';};
+  utterance.onerror=e=>{clearHl();$('speech-status').textContent='Speech error: '+String(e.error||'unknown');};
+  speechSynthesis.speak(utterance);$('speech-status').textContent='Speaking through '+(chosen?.name||'browser default voice')+' — words highlight as spoken.';
  });
  $('speech-stop').addEventListener('click',()=>{
   if('speechSynthesis' in window)speechSynthesis.cancel();
   if(activeRecognition){const instance=activeRecognition;activeRecognition=null;try{instance.stop();}catch(error){console.warn('Unable to stop recognition:',error);}}
   $('speech-status').textContent='Speech and dictation stopped.';
  });
+ if(!window.SpeechRecognition&&!window.webkitSpeechRecognition){const db=$('speech-dictate');if(db){db.disabled=true;db.title='Dictation is not supported in this browser. Try Chrome or Edge.';}}
  $('speech-dictate').addEventListener('click',()=>{
  if(activeRecognition)return toast('Dictation is already active; use Stop speech / dictation.',true);
  const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
