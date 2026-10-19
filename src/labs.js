@@ -151,6 +151,9 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
   $('draw-color')?.addEventListener('input',e=>{ brush.color=e.target.value; });
   $('draw-size')?.addEventListener('input',e=>{ brush.size=Number(e.target.value); $('draw-size-val').textContent=e.target.value; });
   $('draw-opacity')?.addEventListener('input',e=>{ brush.opacity=Number(e.target.value)/100; $('draw-opacity-val').textContent=e.target.value; });
+  $('draw-blend')?.addEventListener('change',e=>{ brush.blendMode=e.target.value; });
+  // Smudge samples the photo canvas under each dab.
+  brush.sampleSource = canvas;
   $('draw-smoothing')?.addEventListener('change',e=>{
    const def = DEFAULT_SMOOTHING[brush.preset.name] ?? 0.3;
    brush.preset = {...brush.preset, smoothing: e.target.checked ? def : 0};

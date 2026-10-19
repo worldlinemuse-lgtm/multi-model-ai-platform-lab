@@ -81,7 +81,12 @@
 <button type="button" class="button secondary small preset-btn" data-brush="marker">Marker</button>
 <button type="button" class="button secondary small preset-btn" data-brush="soft">Soft brush</button>
 <button type="button" class="button secondary small preset-btn" data-brush="eraser">Eraser</button>
+<button type="button" class="button secondary small preset-btn" data-brush="smudge">Smudge</button>
 </div>
+<div class="form-row">
+<label class="field-label" for="draw-blend">BLEND</label><select id="draw-blend" aria-label="Brush blend mode">
+<option value="source-over">Normal</option><option value="multiply">Multiply</option><option value="screen">Screen</option><option value="overlay">Overlay</option><option value="darken">Darken</option><option value="lighten">Lighten</option><option value="color-dodge">Color dodge</option><option value="color-burn">Color burn</option><option value="hard-light">Hard light</option><option value="soft-light">Soft light</option><option value="difference">Difference</option><option value="exclusion">Exclusion</option><option value="hue">Hue</option><option value="saturation">Saturation</option><option value="color">Color</option><option value="luminosity">Luminosity</option>
+</select>
 <div class="form-row">
 <label class="field-label" for="draw-color">COLOR</label><input id="draw-color" type="color" value="#ff3b30">
 <label class="field-label" for="draw-size">SIZE <span id="draw-size-val">8</span>px</label><input id="draw-size" type="range" min="1" max="120" value="8">
