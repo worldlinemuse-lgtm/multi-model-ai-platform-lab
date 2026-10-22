@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
@@ -75,7 +75,7 @@ jobs:
     if: github.event_name != 'pull_request'
     timeout-minutes: 15
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     environment:
@@ -97,7 +97,7 @@ jobs:
   hosted-acceptance:
     if: github.event_name != 'pull_request'
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       DEPLOYED_URL: ${{ needs.deploy.outputs.page_url }}
