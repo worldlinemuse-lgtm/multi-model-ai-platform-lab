@@ -34,7 +34,7 @@ export function deviceSnapshot(){
 export function providerBurndown(auditEvents){
   const by={};
   for(const e of auditEvents||[]){
-    if(e.op!=='inference')continue;
+    if(e.op!=='inference'||e.status==='requested')continue; // one logical request counts once: 'requested' is the open its terminal event closes
     const p=e.provider||'unknown';
     by[p]=by[p]||{provider:p,calls:0,ok:0,failed:0,stopped:0,tokens:0,latSum:0,latN:0,models:new Set()};
     const r=by[p];r.calls++;
@@ -48,7 +48,7 @@ export function providerBurndown(auditEvents){
 
 /* ---------- headline stats ---------- */
 export function headlineStats(auditEvents,otelSnap){
-  const inf=(auditEvents||[]).filter(e=>e.op==='inference');
+  const inf=(auditEvents||[]).filter(e=>e.op==='inference'&&e.status!=='requested');
   const runs=(auditEvents||[]).filter(e=>e.op==='run');
   const dev=deviceSnapshot();
   return [
@@ -124,7 +124,7 @@ const HUD_METRICS=[
   {label:'Heap',get:d=>d.heapUsedMB==null?'n/a':d.heapUsedMB+' MB',warn:d=>d.heapUsedMB!=null&&d.heapLimitMB!=null&&d.heapUsedMB/d.heapLimitMB>0.8},
   {label:'Long tasks',get:d=>String(d.longTasks.count),warn:d=>d.longTasks.count>10},
   {label:'Spans',get:(d,s)=>String(s?.recorded??0),warn:()=>false},
-  {label:'Provider calls',get:(d,s,a)=>String((a||[]).filter(e=>e.op==='inference').length),warn:()=>false},
+  {label:'Provider calls',get:(d,s,a)=>String((a||[]).filter(e=>e.op==='inference'&&e.status!=='requested').length),warn:()=>false},
   {label:'Code runs',get:(d,s,a)=>String((a||[]).filter(e=>e.op==='run').length),warn:()=>false},
 ];
 

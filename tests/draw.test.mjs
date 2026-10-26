@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {BRUSH_PRESETS,DEFAULT_SMOOTHING,BLEND_MODES} from '../src/draw.js';
+import {BRUSH_PRESETS,DEFAULT_SMOOTHING,BLEND_MODES,BrushEngine} from '../src/draw.js';
 
 test('five brush presets defined as data',()=>{
   const ids=Object.keys(BRUSH_PRESETS);
@@ -48,4 +48,14 @@ test('smudge preset samples rather than paints fixed color',()=>{
 test('blur preset carries a blur radius',()=>{
   assert.ok(BRUSH_PRESETS.blur.blur>0, 'blur radius set');
   assert.ok(!Object.values(BRUSH_PRESETS).filter(p=>p!==BRUSH_PRESETS.blur).some(p=>p.blur));
+});
+
+test('clear() enforces the same 30-snapshot cap as beginStroke',()=>{
+  const stubCtx=()=>({clearRect(){},drawImage(){}});
+  const stubCanvas=()=>({width:10,height:10,getContext:()=>stubCtx()});
+  globalThis.document={createElement:()=>stubCanvas()};
+  const engine=new BrushEngine(stubCanvas());
+  for(let i=0;i<35;i++)engine.clear();
+  assert.equal(engine.strokes.length,30);
+  delete globalThis.document;
 });

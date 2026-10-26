@@ -56,7 +56,7 @@ export class BrushEngine {
     this.ctx.clearRect(0,0,w,h);
     if(old.width>0 && old.height>0) this.ctx.drawImage(old,0,0,w,h);
   }
-  clear(){ this.strokes.push(this._snapshot()); this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height); }
+  clear(){ this.strokes.push(this._snapshot()); if(this.strokes.length>30) this.strokes.shift(); this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height); }
   undo(){
     const prev = this.strokes.pop();
     if(!prev) return false;

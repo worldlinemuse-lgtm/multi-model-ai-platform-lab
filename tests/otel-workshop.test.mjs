@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkshopMetrics} from '../src/request-trace.js';
 import {attachOtel, initOtelBridge, otelDiagnosticsText} from '../src/otel-workshop.js';
-import {createLocalOtelPilot} from '../observability/otel-local-pilot.mjs';
+import {createLocalOtelPilot,WhitelistMemoryExporter} from '../observability/otel-local-pilot.mjs';
 import {createLocalOtelMetrics} from '../observability/otel-local-metrics.mjs';
 
 const fakeBridge = () => ({pilot: createLocalOtelPilot(), metrics: createLocalOtelMetrics()});
@@ -190,4 +190,22 @@ test('new snapshot and data-analyze operations are accepted', () => {
   m.finish(d, 'ok');
   const snap = m.otelSnapshot();
   assert.deepEqual(snap.events.map(e => e.op), ['workshop.snapshot', 'workshop.data_analyze']);
+});
+
+test('phase atMs is the event offset from span start, not a duration',()=>{
+  const exporter=new WhitelistMemoryExporter();
+  const span={
+    instrumentationScope:{name:'mm.workshop.local-pilot'},
+    name:'workshop.boot',
+    attributes:{'mm.outcome':'ok','mm.reason':'none'},
+    spanContext:()=>({traceId:'a'.repeat(32),spanId:'b'.repeat(16)}),
+    parentSpanContext:null,
+    duration:[1,500000000],
+    startTime:[100,0],
+    events:[{name:'first',time:[100,250000000]},{name:'second',time:[101,0]}],
+  };
+  exporter.export([span],()=>{});
+  const phases=exporter.snapshot().events[0].phases;
+  assert.equal(phases[0].atMs,250);
+  assert.equal(phases[1].atMs,1000);
 });
