@@ -61,7 +61,7 @@ export function setupLabs({el,toast,download,metrics=null,getDatasets=()=>[],com
    if(!parsed)throw Error('Analyze a dataset first.');
    const rows=groupNumericStats(parsed,{groupColumn:$('data-group-field').value,valueColumn:$('data-group-value').value,missingPolicy:$('data-group-missing').value});
    $('data-group-output').textContent=rows.map(item=>
-    item.label.slice(0,80)+': '+item.observed+'/'+item.count+' observed, total '+item.total+
+    item.label.slice(0,80)+': '+item.observed+'/'+item.count+' observed, '+item.imputed+' imputed, '+item.included+' included, total '+item.total+
     ', mean '+(item.mean===null?'unknown':item.mean.toFixed(3))+
     ', min '+(item.min??'unknown')+', max '+(item.max??'unknown')
    ).join('\n')||'No groups.';

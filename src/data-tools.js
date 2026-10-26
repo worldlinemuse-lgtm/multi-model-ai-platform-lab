@@ -80,18 +80,25 @@ export function groupNumericStats(parsed,{groupColumn,valueColumn,missingPolicy=
   if(key.length>500)throw Error('Group key exceeds 500 characters.');
   if(!map.has(key)){
    if(map.size>=50)throw Error('Maximum 50 distinct groups.');
-   map.set(key,{label:key,count:0,observed:0,sum:0,min:null,max:null});
+   map.set(key,{label:key,count:0,observed:0,imputed:0,sum:0,min:null,max:null});
   }
   const item=map.get(key);item.count++;
   const raw=row?.[valueColumn];
   const numeric=raw===null||raw===undefined||typeof raw==='boolean'||typeof raw==='object'||String(raw).trim()===''?null:Number(raw);
   let amount=Number.isFinite(numeric)?numeric:null;
-  if(amount===null&&missingPolicy==='zero')amount=0;
-  if(amount===null)continue;
-  item.observed++;item.sum+=amount;
+  if(amount===null){
+   // Unusable value: missing (absent/blank) or invalid (non-numeric).
+   // The selected policy decides explicitly, and the two cases are never
+   // conflated in the counts: skip excludes the row; zero imputes 0 and
+   // counts it as imputed, never as observed. A real numeric in the
+   // source, including an actual 0, always counts as observed.
+   if(missingPolicy==='zero'){amount=0;item.imputed++;}
+   else continue;
+  }else item.observed++;
+  item.sum+=amount;
   if(!Number.isFinite(item.sum))throw Error('Grouped sum exceeds numeric range.');
   item.min=item.min===null?amount:Math.min(item.min,amount);
   item.max=item.max===null?amount:Math.max(item.max,amount);
  }
- return [...map.values()].map(({label,count,observed,sum,min,max})=>({label,count,observed,missing:count-observed,total:sum,mean:observed?sum/observed:null,min,max}));
+ return [...map.values()].map(({label,count,observed,imputed,sum,min,max})=>{const included=observed+imputed;return {label,count,observed,imputed,included,missing:count-included,total:sum,mean:included?sum/included:null,min,max};});
 }
