@@ -265,7 +265,9 @@ def check_chat(p):
     p.locator('#clear-chat').click()
     verify(p.locator('#chat-messages .bubble').count()==0,'Clear conversation failed')
     screen(p,'usage')
-    verify(int(p.locator('#usage-total').inner_text())>=2,'Model request audit not counted')
+    # One logical request counts once (2026-10-26 audit fix): the old >=2
+    # threshold encoded the double count (requested + terminal event).
+    verify(int(p.locator('#usage-total').inner_text())>=1,'Model request audit not counted')
     with p.expect_download() as obj:p.locator('#export-audit').click()
     audit=json.loads(Path(obj.value.path()).read_text())
     verify(any(e['status']=='success' for e in audit),'Audit export contains no successful request')
