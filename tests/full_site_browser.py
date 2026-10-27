@@ -281,6 +281,34 @@ def check_chat(p):
     approve(p)
     p.locator('#clear-audit').click()
     verify(p.locator('#usage-total').inner_text()=='0','Clear audit failed')
+def check_chat_retry_no_duplicate(p):
+    setup_vault(p)
+    screen(p,'chat')
+    p.locator('#chat-route').select_option('groq')
+    def fail_groq(route):
+        if route.request.method=='OPTIONS':
+            route.fulfill(status=204,headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'POST, OPTIONS'})
+        else:
+            route.fulfill(status=500,headers={'Content-Type':'application/json','Access-Control-Allow-Origin':'*'},body=json.dumps({'error':{'message':'synthetic failure'}}))
+    p.route('https://api.groq.com/**',fail_groq)
+    p.locator('#chat-input').fill('QA retry-no-duplicate message')
+    p.locator('#send-chat').click()
+    p.wait_for_function("document.querySelectorAll('#chat-messages .bubble.error').length>=1",timeout=20000)
+    verify(p.locator('#chat-input').input_value()=='','Failed prompt was restored into the input')
+    verify(p.locator('#chat-messages .bubble.user').count()==1,'User message duplicated or missing after failure')
+    p.once('dialog',lambda d:d.accept())
+    p.locator('#chat-retry-draft').click()
+    verify(p.locator('#chat-input').input_value()=='QA retry-no-duplicate message','Retry draft did not prepare the prompt')
+    verify(p.locator('#chat-messages .bubble.user').count()==1,'Retry draft sent instead of preparing')
+    p.locator('#new-chat').click()
+    p.route('https://api.groq.com/**',lambda route: None)
+    p.locator('#chat-input').fill('QA stopped message')
+    p.locator('#send-chat').click()
+    p.wait_for_timeout(800)
+    p.locator('#stop-chat').click()
+    p.wait_for_function("document.querySelectorAll('#chat-messages .bubble.error').length>=1",timeout=20000)
+    verify(p.locator('#chat-input').input_value()=='','Stopped prompt was restored into the input')
+    verify(p.locator('#chat-messages .bubble.user').count()==1,'Stopped request duplicated the user message')
 def check_chat_management(p):
     mock_provider(p)
     setup_vault(p)
@@ -730,6 +758,7 @@ CASES=[
  ('Vault locked typing, encryption, persistence, wrong password, removal and wipe',check_vault),
  ('Q21 encrypted vault export/import and passphrase rotation',check_vault_portability),
  ('Mocked API adapter through chat, history, audit and export',check_chat),
+ ('Failed and stopped chat requests do not restore the prompt or duplicate the message',check_chat_retry_no_duplicate),
  ('Q22 network-free diagnostics and manual retry draft',check_local_connection_diagnostics_and_manual_retry),
  ('P14 local conversation search edit export delete',check_chat_management),
  ('Mocked three-stage workflow and stage cap',check_workflows),

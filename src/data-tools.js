@@ -40,7 +40,7 @@ export const DATA_TRANSFORMS=Object.freeze(['filter-contains','filter-equals','f
 export function transformDataset(parsed,{operation,column='',value=''}={}){
  if(!parsed||!Array.isArray(parsed.columns)||!Array.isArray(parsed.records))throw Error('Analyze a dataset first.');
  if(!DATA_TRANSFORMS.includes(operation))throw Error('Choose an available transformation.');
- if(column&&!parsed.columns.includes(column))throw Error('Choose a column in this dataset.');
+ if(column&&!(parsed.allColumns||parsed.columns).includes(column))throw Error('Choose a column in this dataset.');
  if(operation!=='dedupe'&&!column)throw Error('Choose a column first.');
  const rows=parsed.records.slice(),input=String(value);
  let result;
@@ -70,7 +70,7 @@ export function serializeDataset(parsed){
 /* Bounded browser-local grouped numeric statistics. No remote APIs. */
 export function groupNumericStats(parsed,{groupColumn,valueColumn,missingPolicy='skip'}={}){
  if(!parsed||!Array.isArray(parsed.columns)||!Array.isArray(parsed.records)||parsed.records.length>3000)throw Error('Analyze a bounded dataset first.');
- if(!parsed.columns.includes(groupColumn)||!parsed.columns.includes(valueColumn)||groupColumn===valueColumn)throw Error('Choose distinct group and numeric columns.');
+ const cols=parsed.allColumns||parsed.columns;if(!cols.includes(groupColumn)||!cols.includes(valueColumn)||groupColumn===valueColumn)throw Error('Choose distinct group and numeric columns.');
  if(!['skip','zero'].includes(missingPolicy))throw Error('Invalid missing-value policy.');
  const map=new Map();
  for(const row of parsed.records){
