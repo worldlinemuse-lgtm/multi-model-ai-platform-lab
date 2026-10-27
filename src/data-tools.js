@@ -56,10 +56,10 @@ export function transformDataset(parsed,{operation,column='',value=''}={}){
   result=rows.sort((a,b)=>{const cmp=compareCells(cell(a,column),cell(b,column));return operation==='sort-desc'?-cmp:cmp;});
  }else {
   const seen=new Set();
-  result=rows.filter(row=>{const key=column?JSON.stringify(cell(row,column)):JSON.stringify(parsed.columns.map(name=>cell(row,name)));
+  result=rows.filter(row=>{const key=column?JSON.stringify(cell(row,column)):JSON.stringify((parsed.allColumns||parsed.columns).map(name=>cell(row,name)));
    if(seen.has(key))return false;seen.add(key);return true;});
  }
- return {columns:parsed.columns.slice(),records:result};
+ return {columns:parsed.columns.slice(),records:result,hiddenColumns:parsed.hiddenColumns,allColumns:parsed.allColumns?.slice(),headerNotes:parsed.headerNotes?.slice()};
 }
 export function serializeDataset(parsed){
  if(!parsed||!Array.isArray(parsed.records))throw Error('No dataset to export.');

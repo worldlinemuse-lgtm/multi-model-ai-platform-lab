@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseCSV, parseDataset} from '../src/labs.js';
-import {groupNumericStats} from '../src/data-tools.js';
+import {groupNumericStats, transformDataset} from '../src/data-tools.js';
 
 test('duplicate CSV headers are renamed, all values kept', () => {
   const p = parseCSV('name,score,score\nA,10,20\nB,5,7\n');
@@ -41,4 +41,20 @@ test('JSON over 50 columns exposes every column through allColumns', () => {
   assert.equal(g.length, 2);
   assert.equal(g[1].total, 100);
   assert.equal(g[1].observed, 1);
+});
+
+test('whole-row dedupe compares every column, not just the first 50', () => {
+  const base = {};
+  for (let i = 0; i < 60; i++) base['col' + i] = i;
+  const a = {...base};
+  const b = {...base, col55: 200};
+  const c = {...base};
+  const p = parseDataset(JSON.stringify([a, b, c]));
+  const whole = transformDataset(p, {operation: 'dedupe'});
+  assert.equal(whole.records.length, 2);
+  assert.deepEqual(whole.records.map(r => r.col55), [100 - 100 + 55, 200]);
+  assert.equal(whole.allColumns.length, 60);
+  assert.equal(whole.columns.length, 50);
+  const byCol = transformDataset(p, {operation: 'dedupe', column: 'col0'});
+  assert.equal(byCol.records.length, 1);
 });
