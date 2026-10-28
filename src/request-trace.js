@@ -26,7 +26,11 @@ export const WORKSHOP_OUTCOMES = Object.freeze(['ok','error','timeout','cancelle
 export const WORKSHOP_REASONS = Object.freeze([
   'none','runtime-error','uncaught-error','unhandled-rejection','user-stop',
   'superseded','time-limit','output-limit','storage-error','invalid-input',
-  'unsupported-asset','worker-error','offline-unavailable','unknown'
+  'unsupported-asset','worker-error','offline-unavailable','unknown',
+  // Snapshot failure reasons (2026-10-27 re-audit): snapshot() and
+  // restoreSnapshot() already finished spans with these, but the set
+  // rejected them, so reporting the failure threw instead.
+  'resource-limit','clone-failed','restore-failed'
 ]);
 const OPS = new Set(WORKSHOP_OPERATIONS), OUTCOMES = new Set(WORKSHOP_OUTCOMES), REASONS = new Set(WORKSHOP_REASONS);
 const MAX_EVENTS=160, MAX_ACTIVE=20, MAX_DURATION_MS=600000;

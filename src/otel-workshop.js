@@ -49,6 +49,9 @@ const OTEL_REASONS = Object.freeze({
   'unsupported-asset': 'unsupported',
   'worker-error': 'worker-failed',
   'offline-unavailable': 'offline-unavailable',
+  'resource-limit': 'resource-limit',
+  'clone-failed': 'clone-failed',
+  'restore-failed': 'restore-failed',
   'unknown': 'unobserved',
 });
 const OTEL_OUTCOMES = new Set(['ok', 'error', 'timeout', 'cancelled', 'warning', 'unknown']);

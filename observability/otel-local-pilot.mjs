@@ -17,7 +17,8 @@ const OUTCOMES = Object.freeze(['ok','error','timeout','cancelled','warning','un
 const REASONS = Object.freeze([
   'none','invalid-input','worker-failed','runtime-failed','time-limit',
   'user-stop','superseded','parent-closed','storage-failed',
-  'offline-unavailable','resource-limit','unsupported','unobserved'
+  'offline-unavailable','resource-limit','unsupported','unobserved',
+  'clone-failed','restore-failed'
 ]);
 const isAllowed=(value,items,name)=>{if(typeof value!=='string'||!items.includes(value))throw TypeError('Invalid '+name);return value;};
 const LIMIT=160;

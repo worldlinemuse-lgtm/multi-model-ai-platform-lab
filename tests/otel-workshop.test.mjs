@@ -209,3 +209,37 @@ test('phase atMs is the event offset from span start, not a duration',()=>{
   assert.equal(phases[0].atMs,250);
   assert.equal(phases[1].atMs,1000);
 });
+
+test('snapshot failure reasons are registered on the base metrics', () => {
+  const m = createWorkshopMetrics({clock: () => 0});
+  for (const [outcome, reason] of [['cancelled', 'resource-limit'], ['error', 'clone-failed'], ['error', 'restore-failed']]) {
+    const t = m.begin('snapshot');
+    assert.equal(m.finish(t, outcome, reason), true);
+  }
+  const reasons = m.summary().recent.map(e => e.reason);
+  assert.ok(reasons.includes('resource-limit'));
+  assert.ok(reasons.includes('clone-failed'));
+  assert.ok(reasons.includes('restore-failed'));
+});
+
+test('snapshot failure reasons map through the OTel mirror without degrading', () => {
+  const m = attachOtel(createWorkshopMetrics({clock: () => 0}), readyResult());
+  for (const [outcome, reason] of [['cancelled', 'resource-limit'], ['error', 'clone-failed'], ['error', 'restore-failed']]) {
+    const t = m.begin('snapshot');
+    m.finish(t, outcome, reason);
+    const events = m.otelSnapshot().events;
+    assert.equal(events[events.length - 1].reason, reason);
+  }
+});
+
+test('every registered workshop reason maps to a real OTel reason, not the fallback', async () => {
+  const {WORKSHOP_REASONS} = await import('../src/request-trace.js');
+  const m = attachOtel(createWorkshopMetrics({clock: () => 0}), readyResult());
+  for (const reason of WORKSHOP_REASONS) {
+    if (reason === 'unknown') continue; // 'unknown' -> 'unobserved' is the designed fallback
+    const t = m.begin('snapshot');
+    m.finish(t, 'error', reason);
+    const events = m.otelSnapshot().events;
+    assert.notEqual(events[events.length - 1].reason, 'unobserved', reason);
+  }
+});

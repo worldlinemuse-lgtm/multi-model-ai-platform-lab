@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
 const base='https://example.github.io/multi-model-ai-platform/';
 const CACHE_PREFIX='mm-studio-shell-'+encodeURIComponent(new URL(base).pathname)+'-';
-const BASE_CACHE=CACHE_PREFIX+'lab-10';
+const BASE_CACHE=CACHE_PREFIX+'lab-11';
 function harness({online=true,existingCaches=[],failRefresh=false,failControl=false}={}){
  const callbacks={},deleted=[],stores=new Map(existingCaches.map(name=>[name,new Map()]));
  const net={online},failures={refresh:failRefresh,control:failControl};
@@ -146,11 +146,21 @@ test('V6.0: registration path participates in offline cache namespace',()=>{
  assert.ok(BASE_CACHE.startsWith('mm-studio-shell-'+encodeURIComponent('/multi-model-ai-platform/')+'-'));
  assert.ok(!BASE_CACHE.startsWith('mm-studio-shell-'+encodeURIComponent('/other-project/')+'-'));
 });
-test('Q03: all directly imported main modules are in the offline shell',()=>{
- const main=readFileSync(new URL('../src/main.js',import.meta.url),'utf8');
+test('Q03: every module reachable from main.js is in the offline shell',()=>{
  const match=source.match(/const SHELL=\[([^\]]+)\];/);assert.ok(match);
  const shell=new Set([...match[1].matchAll(/['"]([^'"]+)['"]/g)].map(x=>x[1]));
- const dependencies=[...main.matchAll(/\bfrom\s+['"]\.\/([^'"]+)['"]/g)].map(m=>'./src/'+m[1]);
- assert.ok(dependencies.includes('./src/labs.js'));
- for(const path of dependencies)assert.ok(shell.has(path),'offline shell missing '+path);
+ // Recursive static + dynamic import walk. A direct-import-only check
+ // missed zip.js -> bounded-deflate.js; the walk below catches any
+ // transitive gap. Observability bundles are lazy optional diagnostics
+ // (the bridge degrades to unavailable without them) and are covered by
+ // hosted integrity instead, so they are excluded here by design.
+ const importRe=/\bfrom\s+['"](\.[^'"]+)['"]|import\s*\(\s*['"](\.[^'"]+)['"]/g;
+ const resolve=(from,rel)=>{const parts=from.split('/').slice(0,-1);for(const seg of rel.split('/')){if(seg==='.')continue;if(seg==='..')parts.pop();else parts.push(seg);}return parts.join('/');};
+ const seen=new Set(),stack=['./src/main.js'];
+ while(stack.length){const cur=stack.pop();if(seen.has(cur))continue;seen.add(cur);
+  const text=readFileSync(new URL('../'+cur.slice(2),import.meta.url),'utf8');
+  for(const m of text.matchAll(importRe)){const next=resolve(cur,m[1]||m[2]);if(next.startsWith('./observability/'))continue;stack.push(next);}}
+ assert.ok(seen.has('./src/labs.js'));
+ assert.ok(seen.has('./src/bounded-deflate.js'));
+ for(const mod of seen)assert.ok(shell.has(mod),'offline shell missing '+mod);
 });

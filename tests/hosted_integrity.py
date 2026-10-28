@@ -12,11 +12,24 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent.parent
-ASSETS = (
-    'index.html', 'styles.css', 'provider-guides.js',
-    'src/main.js', 'src/core.js', 'src/labs.js','src/speech-settings.js','src/image-transform.js', 'src/data-tools.js', 'src/project-files.js', 'src/preview-assets.js', 'src/note-tools.js', 'src/snapshot-diff.js', 'src/capability-probes.js', 'src/knowledge.js','src/wasm-policy.js','src/wasm-runner.js','src/wasm-worker.js','src/wasm-ui.js','src/expression-repl.js','src/expression-repl-worker.js','src/expression-repl-ui.js','src/workflow-plan.js','src/workflow-supervisor.js','src/local-evidence.js','src/knowledge-pages.js','src/binary-assets.js','src/provider-presets.js','src/ondevice-readiness.js','src/model-request-settings.js','src/connection-diagnostics.js','src/provider-connection-probe.js','src/review-edits.js','src/docx-text.js','src/knowledge-documents.js',
-    'src/provider-api.js','src/request-trace.js', 'src/otel-workshop.js', 'src/sandbox.js', 'src/module-graph.js', 'src/module-linker.js', 'src/module-runtime.js', 'src/storage.js',
-    'src/vault.js', 'src/zip.js', 'sw.js', 'favicon.svg',
+
+
+def shell_assets():
+    """Read the service worker's SHELL manifest (minus the site root)."""
+    import re
+    text = (ROOT / 'sw.js').read_text()
+    match = re.search(r"const SHELL=\[(.*?)\];", text, re.S)
+    assert match, 'could not parse SHELL from sw.js'
+    paths = re.findall(r"""['"](\./[^'"]+)['"]""", match.group(1))
+    return tuple(p[2:] for p in paths if p != './')
+
+
+# The hosted check verifies exactly what the offline shell stages, plus the
+# worker script itself and the observability bundles it loads lazily. This
+# keeps the list from drifting behind SHELL (the old list silently omitted
+# bounded-deflate.js, telemetry-view.js and draw.js).
+ASSETS = shell_assets() + (
+    'sw.js',
     'observability/dist/otel-local-pilot.js', 'observability/dist/otel-local-metrics.js',
 )
 
