@@ -1,5 +1,6 @@
 import {providerById} from './core.js';
 import {validateOutputCap} from './model-request-settings.js';
+import {readBoundedResponseText,ResponseTooLargeError} from './bounded-response.js';
 const ENDPOINTS=Object.freeze({groq:'https://api.groq.com/openai/v1/chat/completions',openrouter:'https://openrouter.ai/api/v1/chat/completions',mistral:'https://api.mistral.ai/v1/chat/completions',ollama:'https://ollama.com/v1/chat/completions',huggingface:'https://router.huggingface.co/v1/chat/completions',aion:'https://api.aionlabs.ai/v1/chat/completions'});
 export function validateModel(id,model){if(!providerById(id))throw Error('Unknown provider');if(typeof model!=='string'||!model.trim()||model.length>130)throw Error('Choose an eligible model ID in the vault first.');if(id==='openrouter'&&model!=='openrouter/free'&&!model.endsWith(':free'))throw Error('OpenRouter must use openrouter/free or a model ending in :free. Paid routes are disabled.');if(id==='cloudflare'&&!/^@cf\/[A-Za-z0-9._/-]+$/.test(model))throw Error('Cloudflare model must be an @cf/ route.');if(id==='gemini'&&!/^gemini-[\w.-]+$/.test(model))throw Error('Gemini model ID must begin with gemini-.');if(!/^[\w@/:.+-]+$/.test(model))throw Error('Model ID contains unsupported characters.');}
 export function buildRequest(provider,credential,messages,{maxOutputTokens=512}={}){validateOutputCap(maxOutputTokens);const id=provider,model=credential.model;validateModel(id,model);if(!credential.attested)throw Error('Account free-plan attestation missing.');if(!credential.key)throw Error('Missing key.');const simplified=messages.filter(m=>['user','assistant','system'].includes(m.role)&&typeof m.content==='string').slice(-12).map(m=>({role:m.role,content:m.content.slice(0,12000)}));if(!simplified.length)throw Error('No prompt supplied');let url,headers={'Content-Type':'application/json'},body;
@@ -23,9 +24,10 @@ export async function callProvider(id,credential,messages,{signal,timeoutMs=4500
  let response,responseText;
  try{
   response=await fetch(request.url,{method:'POST',headers:request.headers,body:JSON.stringify(request.body),signal:combined.signal,mode:'cors',credentials:'omit',cache:'no-store',redirect:'error'});
-  responseText=await response.text();
+  responseText=await readBoundedResponseText(response,{signal:combined.signal});
  }catch(e){
   if(deadline.signal.aborted&&!signal?.aborted)throw Error(`Request to ${providerById(id)?.name||id} timed out after ${Math.ceil(ms/1000)} seconds. Check provider availability or network; no automatic retry was sent.`);
+  if(e instanceof ResponseTooLargeError)throw e;
   if(e.name==='AbortError')throw e;
   throw Error(`Browser request failed for ${providerById(id)?.name}. The provider may block cross-origin requests (CORS), or the network may be unavailable. ${e.message}`);
  }finally{

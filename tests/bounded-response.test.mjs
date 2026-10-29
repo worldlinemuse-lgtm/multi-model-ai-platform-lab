@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readBoundedResponseText,ResponseTooLargeError} from '../src/bounded-response.js';
+const body=(parts,headers={})=>new Response(new ReadableStream({start(c){for(const item of parts)c.enqueue(new TextEncoder().encode(item));c.close();}}),{headers});
+test('bounded response decodes text across chunk boundaries',async()=>{assert.equal(await readBoundedResponseText(body(['hello ','world']),{maxBytes:11}),'hello world');});
+test('bounded response enforces chunked byte total',async()=>{await assert.rejects(readBoundedResponseText(body(['1234','5678']),{maxBytes:7}),ResponseTooLargeError);});
+test('bounded response enforces content-length before reading',async()=>{await assert.rejects(readBoundedResponseText(body(['abc'],{'content-length':'1000'}),{maxBytes:4}),ResponseTooLargeError);});
+test('bounded response counts UTF-8 bytes not characters',async()=>{await assert.rejects(readBoundedResponseText(body(['🦉']),{maxBytes:3}),ResponseTooLargeError);assert.equal(await readBoundedResponseText(body(['🦉']),{maxBytes:4}),'🦉');});
+test('bounded response honors pre-aborted signals',async()=>{const c=new AbortController();c.abort(new DOMException('stopped','AbortError'));await assert.rejects(readBoundedResponseText(body(['x']),{signal:c.signal}),e=>e.name==='AbortError');});
+test('text-only mocks remain supported',async()=>{assert.equal(await readBoundedResponseText({text:async()=>'{"ok":true}'},{maxBytes:32}),'{"ok":true}');await assert.rejects(readBoundedResponseText({text:async()=> 'x'.repeat(40)},{maxBytes:32}),ResponseTooLargeError);});
+test('bounded response cancels stalled body on abort',async()=>{const c=new AbortController();let cancelled=false;const response=new Response(new ReadableStream({pull(){},cancel(){cancelled=true;}}));const p=readBoundedResponseText(response,{signal:c.signal,maxBytes:10});await Promise.resolve();c.abort(new DOMException('stopped','AbortError'));await assert.rejects(p,e=>e.name==='AbortError');assert.equal(cancelled,true);});

@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+globalThis.window={};
+import {KeyVault} from '../src/vault.js';
+const pass='not-a-production-password-2026';
+const a={key:'FAKE-GROQ-KEY',model:'llama-3.1-8b-instant',attested:true};
+const b={key:'FAKE-OPENROUTER-KEY',model:'openrouter/free',attested:true};
+test('overlapping vault puts retain both keys durably',async()=>{const v=new KeyVault();await v.erase();await v.create(pass);await Promise.all([v.put('groq',a),v.put('openrouter',b)]);assert.equal(v.count,2);v.lock();await v.unlock(pass);assert.equal(v.get('groq').key,a.key);assert.equal(v.get('openrouter').key,b.key);await v.erase();});
+test('erase after an overlapping put cannot resurrect credentials',async()=>{const v=new KeyVault();await v.create(pass);await Promise.all([v.put('groq',a),v.erase()]);assert.equal(await v.exists(),false);assert.equal(v.isUnlocked,false);});
+test('queued vault rotation preserves preceding queued put',async()=>{const v=new KeyVault();await v.create(pass);await Promise.all([v.put('groq',a),v.rotatePassphrase(pass,'a-distinct-long-test-password')]);v.lock();await assert.rejects(v.unlock(pass),/incorrect|damaged/i);await v.unlock('a-distinct-long-test-password');assert.equal(v.get('groq').key,a.key);await v.erase();});
