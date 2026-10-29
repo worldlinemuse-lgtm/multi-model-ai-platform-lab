@@ -954,7 +954,8 @@ def check_chat_double_submit_guard(p):
     q.wait_for_function("document.querySelector('#send-chat').disabled===false",timeout=15000)
     verify(len(hits)==2,'Recovered send did not dispatch exactly one provider request')
     q.reload(timeout=25000)
-    q.locator('#view-overview h1').wait_for(timeout=16000)
+    # The hash persists on reload, so the restored view may already be chat.
+    q.wait_for_function("document.querySelector('#chat-messages')?.textContent.includes('QA recovered persistence reply')",timeout=16000)
     screen(q,'chat')
     verify('QA recovered persistence reply' in q.locator('#chat-messages').inner_text(),'Recovered prompt not saved across reload')
     verify(q.locator('#chat-messages .bubble.assistant').count()>=2,'Recovered provider reply did not persist across reload')
