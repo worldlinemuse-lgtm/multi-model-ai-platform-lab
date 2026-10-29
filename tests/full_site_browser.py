@@ -917,6 +917,15 @@ def check_chat_double_submit_guard(p):
     q.locator('#send-chat').click()
     q.evaluate("document.querySelector('#chat-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))")
     q.wait_for_function("document.querySelector('#toast').textContent.includes('already in progress')",timeout=10000)
+    # While the durable prompt write is pending, the thread must not be
+    # deleted, cleared or replaced. Accept any dialog so a missing guard
+    # cannot pass solely because Playwright dismissed confirmation.
+    q.on('dialog',lambda d:d.accept())
+    q.locator('#new-chat').click()
+    q.locator('#clear-chat').click()
+    q.locator('#delete-chat-thread').click()
+    verify(q.locator('#thread-list .thread-entry').count()==1,'New thread was created during pending prompt save')
+    verify(q.locator('#chat-messages .bubble.user').count()==1,'Conversation mutated during pending save')
     q.wait_for_function("document.querySelector('#chat-messages').textContent.includes('SYNTHETIC ACCEPTANCE RESPONSE')",timeout=20000)
     verify(q.locator('#chat-messages .bubble.user').count()==1,'Double submit recorded two user messages')
     verify(len(hits)==1,'Double submit dispatched two provider requests')
@@ -935,6 +944,20 @@ def check_chat_double_submit_guard(p):
     verify(q.locator('#chat-input').input_value()=='QA failed-save guard message','Failed save did not restore the prompt')
     verify(q.locator('#send-chat').is_enabled(),'Send was not re-enabled after the failed save')
     verify(len(hits)==1,'Provider was called despite the failed save')
+    # A transient write failure must not disable later ordinary saving.
+    # The user can retry after storage recovers and the completed response
+    # must survive a full browser reload, not merely exist in memory.
+    q.evaluate("window.__breakWrites=false")
+    q.locator('#chat-input').fill('QA recovered persistence reply')
+    q.locator('#send-chat').click()
+    q.wait_for_function("document.querySelectorAll('#chat-messages .bubble.assistant').length>=2",timeout=15000)
+    q.wait_for_function("document.querySelector('#send-chat').disabled===false",timeout=15000)
+    verify(len(hits)==2,'Recovered send did not dispatch exactly one provider request')
+    q.reload(timeout=25000)
+    q.locator('#view-overview h1').wait_for(timeout=16000)
+    screen(q,'chat')
+    verify('QA recovered persistence reply' in q.locator('#chat-messages').inner_text(),'Recovered prompt not saved across reload')
+    verify(q.locator('#chat-messages .bubble.assistant').count()>=2,'Recovered provider reply did not persist across reload')
     verify(not errors,'Page errors on the chat concurrency page: '+str(errors))
     ctx.close()
 CASES=[
