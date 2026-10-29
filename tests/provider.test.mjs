@@ -43,3 +43,24 @@ test('Cloudflare does not silently strip a system-only request',()=>{
  const req=buildRequest('cloudflare',{...key,model:'@cf/meta/llama-3.1-8b-instruct-fp8'},[{role:'system',content:'System constraints'}]);
  assert.deepEqual(req.body.messages,[{role:'system',content:'System constraints'}]);
 });
+
+test('provider adapter rejects excessive chunked response bodies before JSON parsing',async()=>{
+ const original=globalThis.fetch;
+ globalThis.fetch=async()=>new Response(new ReadableStream({start(c){
+  const bytes=new Uint8Array(600_000);
+  c.enqueue(bytes);c.enqueue(bytes);c.close();
+ }}),{status:200,headers:{'content-type':'application/json'}});
+ try{await assert.rejects(callProvider('openrouter',key,[{role:'user',content:'check response limit'}]),/exceeds the 1048576-byte limit/i);}
+ finally{globalThis.fetch=original;}
+});
+
+test('provider adapter parses a streamed successful response and preserves token usage',async()=>{
+ const original=globalThis.fetch;
+ const payload=JSON.stringify({model:'openrouter/free',choices:[{message:{content:'streamed JSON body'}}],usage:{prompt_tokens:3,completion_tokens:4,total_tokens:7}});
+ globalThis.fetch=async()=>new Response(new ReadableStream({start(c){
+  const bytes=new TextEncoder().encode(payload);
+  c.enqueue(bytes.slice(0,7));c.enqueue(bytes.slice(7));c.close();
+ }}),{status:200,headers:{'content-type':'application/json'}});
+ try{const result=await callProvider('openrouter',key,[{role:'user',content:'check streamed JSON'}]);assert.equal(result.text,'streamed JSON body');assert.equal(result.usage.total_tokens,7);}
+ finally{globalThis.fetch=original;}
+});
