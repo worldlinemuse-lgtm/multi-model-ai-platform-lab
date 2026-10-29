@@ -818,6 +818,74 @@ def check_chat_persist_before_dispatch(p):
     verify(p2.locator('#save-indicator').inner_text().startswith('Save failed'),'Save indicator did not report the failure')
     verify(not errors2,'Page errors on the failure-injection page: '+str(errors2))
     ctx2.close()
+def check_vault_commit_before_adopt(p):
+    # Re-audit item 4: vault mutations must commit before they are adopted.
+    # With readwrite transactions broken, create/put/drop/erase must leave
+    # both the in-memory vault and durable storage exactly as they were:
+    # no phantom entries, no resurrected deletions, no phantom vault.
+    # Each phase breaks with its own message so a toast wait cannot pass
+    # vacuously off an earlier phase's toast.
+    base=p.url.split('#')[0]
+    ctx=p.context.browser.new_context(viewport={'width':1360,'height':860})
+    q=ctx.new_page()
+    errors=[]
+    q.on('pageerror',lambda e:errors.append(str(e)))
+    q.add_init_script("""(()=>{const orig=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(names,mode,...rest){if(mode==='readwrite'&&window.__breakWrites)throw new Error(window.__breakMessage||'synthetic storage failure');return orig.call(this,names,mode,...rest);};})();""")
+    q.goto(base,timeout=25000)
+    q.locator('#view-overview h1').wait_for(timeout=16000)
+    # Create failure: no phantom unlocked vault. Switching views re-renders
+    # from memory, so a half-adopted create would show UNLOCKED here.
+    q.evaluate("window.__breakWrites=true;window.__breakMessage='synthetic vault-create failure'")
+    screen(q,'vault')
+    q.locator('#vault-password').fill('test-only-vault-passphrase-2026')
+    q.locator('#vault-submit').click()
+    q.wait_for_function("document.querySelector('#toast').textContent.includes('synthetic vault-create failure')",timeout=10000)
+    screen(q,'overview')
+    screen(q,'vault')
+    verify(q.locator('#vault-status').inner_text()=='NOT CREATED','Failed vault create left a phantom vault')
+    # Real vault first, then break writes mid-session.
+    q.evaluate("window.__breakWrites=false")
+    setup_vault(q)
+    # Put failure: no phantom entry in memory, none durable either.
+    q.locator('#key-provider').select_option('openrouter')
+    q.locator('#key-model').fill('openrouter/free')
+    q.locator('#key-value').fill('TEST-FAKE-NOT-A-REAL-API-KEY-2')
+    q.locator('#key-attest').check()
+    q.evaluate("window.__breakWrites=true;window.__breakMessage='synthetic key-save failure'")
+    q.locator('#save-key').click()
+    q.wait_for_function("document.querySelector('#toast').textContent.includes('synthetic key-save failure')",timeout=10000)
+    screen(q,'overview')
+    screen(q,'vault')
+    verify('openrouter' not in q.locator('#vault-items').inner_text().lower(),'Failed key save left a phantom entry')
+    # Drop failure: the entry stays listed.
+    q.on('dialog',lambda d:d.accept())
+    q.evaluate("window.__breakMessage='synthetic key-remove failure'")
+    q.locator('#vault-items .vault-item button').first.click()
+    q.wait_for_function("document.querySelector('#toast').textContent.includes('synthetic key-remove failure')",timeout=10000)
+    screen(q,'overview')
+    screen(q,'vault')
+    verify('GroqCloud' in q.locator('#vault-items').inner_text(),'Failed key removal dropped the entry from memory')
+    # Erase failure: the vault stays unlocked with its keys.
+    q.evaluate("window.__breakMessage='synthetic vault-wipe failure'")
+    q.locator('#vault-wipe').click()
+    q.wait_for_function("document.querySelector('#toast').textContent.includes('synthetic vault-wipe failure')",timeout=10000)
+    screen(q,'overview')
+    screen(q,'vault')
+    verify(q.locator('#vault-status').inner_text()=='UNLOCKED','Failed vault wipe locked or erased the vault')
+    verify('GroqCloud' in q.locator('#vault-items').inner_text(),'Failed vault wipe lost the keys')
+    # Durable proof: writes back on, lock + unlock round-trips the ORIGINAL
+    # vault only — groq present, no phantom openrouter key.
+    q.evaluate("window.__breakWrites=false")
+    q.locator('#vault-lock').click()
+    q.wait_for_function("document.querySelector('#vault-status').textContent==='LOCKED'")
+    q.locator('#vault-password').fill('test-only-vault-passphrase-2026')
+    q.locator('#vault-submit').click()
+    q.wait_for_function("document.querySelector('#vault-status').textContent==='UNLOCKED'",timeout=15000)
+    items=q.locator('#vault-items').inner_text()
+    verify('GroqCloud' in items,'Groq key did not survive the failed-drop round-trip')
+    verify('openrouter' not in items.lower(),'Phantom openrouter key became durable after the failed save')
+    verify(not errors,'Page errors on the vault failure-injection page: '+str(errors))
+    ctx.close()
 CASES=[
  ('12-screen navigation and command palette',check_navigation),
  ('Workspace projects, files, runner, snapshots, JSON ZIP and import/export',check_workspace),
@@ -830,6 +898,7 @@ CASES=[
  ('Q26 validated local provider presets without network calls',check_q26_provider_model_presets),
  ('Vault locked typing, encryption, persistence, wrong password, removal and wipe',check_vault),
  ('Q21 encrypted vault export/import and passphrase rotation',check_vault_portability),
+ ('Vault mutations commit before adoption under storage failure',check_vault_commit_before_adopt),
  ('Mocked API adapter through chat, history, audit and export',check_chat),
  ('Failed and stopped chat requests do not restore the prompt or duplicate the message',check_chat_retry_no_duplicate),
  ('Chat prompt persists before provider dispatch, compare send, failed-save gate',check_chat_persist_before_dispatch),
