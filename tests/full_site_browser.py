@@ -886,6 +886,57 @@ def check_vault_commit_before_adopt(p):
     verify('openrouter' not in items.lower(),'Phantom openrouter key became durable after the failed save')
     verify(not errors,'Page errors on the vault failure-injection page: '+str(errors))
     ctx.close()
+def check_chat_double_submit_guard(p):
+    # Re-audit P0-1: two submits during the persist-before-dispatch save
+    # must produce one user message and one provider request, and a failed
+    # save with a second submit attempt must roll back exactly the failed
+    # message. The save is stretched by delaying the transaction's
+    # oncomplete handler, which delays saveNow's resolution without
+    # breaking the commit itself. The rejection toast is the vacuity
+    # guard: it only appears if the second submit actually landed while
+    # the first save was still pending.
+    base=p.url.split('#')[0]
+    ctx=p.context.browser.new_context(viewport={'width':1360,'height':860})
+    q=ctx.new_page()
+    errors=[]
+    q.on('pageerror',lambda e:errors.append(str(e)))
+    q.add_init_script("""(()=>{const orig=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...a){if(a[1]==='readwrite'&&window.__breakWrites)throw new Error(window.__breakMessage||'synthetic storage failure');const tx=orig.apply(this,a);if(a[1]==='readwrite'&&window.__delayWrites){let h=null;try{Object.defineProperty(tx,'oncomplete',{configurable:true,set(v){h=v;},get(){return h;}});}catch(e){}tx.addEventListener('complete',()=>{setTimeout(()=>{if(h)h.call(tx,new Event('complete'));},window.__delayMs||1500);});}return tx;};})();""")
+    q.goto(base,timeout=25000)
+    q.locator('#view-overview h1').wait_for(timeout=16000)
+    hits=[]
+    def counting(route):
+        if route.request.method!='OPTIONS':hits.append(1)
+        fake_groq(route)
+    q.route('https://api.groq.com/**',counting)
+    setup_vault(q)
+    screen(q,'chat')
+    q.locator('#chat-route').select_option('groq')
+    # Double submit inside one stretched save: one message, one request.
+    q.evaluate("window.__delayWrites=true;window.__delayMs=1500")
+    q.locator('#chat-input').fill('QA double-submit guard message')
+    q.locator('#send-chat').click()
+    q.evaluate("document.querySelector('#chat-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))")
+    q.wait_for_function("document.querySelector('#toast').textContent.includes('already in progress')",timeout=10000)
+    q.wait_for_function("document.querySelector('#chat-messages').textContent.includes('SYNTHETIC ACCEPTANCE RESPONSE')",timeout=20000)
+    verify(q.locator('#chat-messages .bubble.user').count()==1,'Double submit recorded two user messages')
+    verify(len(hits)==1,'Double submit dispatched two provider requests')
+    verify(q.locator('#send-chat').is_enabled(),'Send was not re-enabled after the guarded send')
+    # Let the response's debounced save settle before breaking writes.
+    q.evaluate("window.__delayWrites=false")
+    q.wait_for_timeout(800)
+    # Failed save plus a second submit attempt: the thread keeps exactly
+    # its one prior user message, the prompt returns, nothing dispatches.
+    q.evaluate("window.__breakWrites=true;window.__breakMessage='synthetic chat-save failure'")
+    q.locator('#chat-input').fill('QA failed-save guard message')
+    q.locator('#send-chat').click()
+    q.evaluate("document.querySelector('#chat-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))")
+    q.wait_for_function("document.querySelector('#toast').textContent.includes('not sent')",timeout=10000)
+    verify(q.locator('#chat-messages .bubble.user').count()==1,'Failed save rollback removed the wrong message')
+    verify(q.locator('#chat-input').input_value()=='QA failed-save guard message','Failed save did not restore the prompt')
+    verify(q.locator('#send-chat').is_enabled(),'Send was not re-enabled after the failed save')
+    verify(len(hits)==1,'Provider was called despite the failed save')
+    verify(not errors,'Page errors on the chat concurrency page: '+str(errors))
+    ctx.close()
 CASES=[
  ('12-screen navigation and command palette',check_navigation),
  ('Workspace projects, files, runner, snapshots, JSON ZIP and import/export',check_workspace),
@@ -902,6 +953,7 @@ CASES=[
  ('Mocked API adapter through chat, history, audit and export',check_chat),
  ('Failed and stopped chat requests do not restore the prompt or duplicate the message',check_chat_retry_no_duplicate),
  ('Chat prompt persists before provider dispatch, compare send, failed-save gate',check_chat_persist_before_dispatch),
+ ('Chat double submit during save is guarded, failed save rolls back exactly',check_chat_double_submit_guard),
  ('Q22 network-free diagnostics and manual retry draft',check_local_connection_diagnostics_and_manual_retry),
  ('P14 local conversation search edit export delete',check_chat_management),
  ('Mocked three-stage workflow and stage cap',check_workflows),
