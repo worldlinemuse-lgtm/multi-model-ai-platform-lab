@@ -6,7 +6,8 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
 const base='https://example.github.io/multi-model-ai-platform/';
 const CACHE_PREFIX='mm-studio-shell-'+encodeURIComponent(new URL(base).pathname)+'-';
-const BASE_CACHE=CACHE_PREFIX+'lab-11';
+const cacheVersion=source.match(/const CACHE=CACHE_PREFIX\+'([^']+)'/);assert.ok(cacheVersion,'service-worker CACHE version must be declared');
+const BASE_CACHE=CACHE_PREFIX+cacheVersion[1];
 function harness({online=true,existingCaches=[],failRefresh=false,failControl=false}={}){
  const callbacks={},deleted=[],stores=new Map(existingCaches.map(name=>[name,new Map()]));
  const net={online},failures={refresh:failRefresh,control:failControl};
