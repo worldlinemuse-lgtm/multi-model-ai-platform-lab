@@ -929,7 +929,10 @@ def check_chat_double_submit_guard(p):
     q.wait_for_function("document.querySelector('#chat-messages').textContent.includes('SYNTHETIC ACCEPTANCE RESPONSE')",timeout=20000)
     verify(q.locator('#chat-messages .bubble.user').count()==1,'Double submit recorded two user messages')
     verify(len(hits)==1,'Double submit dispatched two provider requests')
-    verify(q.locator('#send-chat').is_enabled(),'Send was not re-enabled after the guarded send')
+    # A response bubble renders before the explicit terminal durability write;
+    # Send is deliberately disabled until that write commits.
+    q.wait_for_function("document.querySelector('#send-chat').disabled===false",timeout=15000)
+    verify(q.locator('#send-chat').is_enabled(),'Send was not re-enabled after the durable response save')
     # Let the response's debounced save settle before breaking writes.
     q.evaluate("window.__delayWrites=false")
     q.wait_for_timeout(800)
