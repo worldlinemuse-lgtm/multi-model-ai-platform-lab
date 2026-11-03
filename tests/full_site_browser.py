@@ -964,6 +964,60 @@ def check_chat_double_submit_guard(p):
     verify(q.locator('#chat-messages .bubble.assistant').count()>=2,'Recovered provider reply did not persist across reload')
     verify(not errors,'Page errors on the chat concurrency page: '+str(errors))
     ctx.close()
+def check_cross_tab_revision(p):
+    # Cross-tab revisions: two pages in one context share IndexedDB, so
+    # the second page boots stale. Its later save must not silently
+    # overwrite the first page's newer workspace. It must warn, export
+    # a backup of its own state, and leave the stored record untouched.
+    base=p.url.split('#')[0]
+    ctx=p.context.browser.new_context(accept_downloads=True,viewport={'width':1360,'height':860})
+    a=ctx.new_page();b=ctx.new_page()
+    errors=[]
+    a.on('pageerror',lambda e:errors.append(str(e)))
+    b.on('pageerror',lambda e:errors.append(str(e)))
+    a.goto(base,timeout=25000);a.locator('#view-overview h1').wait_for(timeout=16000)
+    b.goto(base,timeout=25000);b.locator('#view-overview h1').wait_for(timeout=16000)
+    # Page A saves first, while B is already stale.
+    screen(a,'knowledge')
+    a.locator('#knowledge-title').fill('QA cross-tab A note')
+    a.locator('#knowledge-content').fill('Written by the first tab')
+    a.locator('#knowledge-form button[type="submit"]').click()
+    a.wait_for_function("document.querySelector('#note-count').textContent.includes('1 notes')",timeout=10000)
+    a.wait_for_timeout(900)
+    # Page B edits and saves; the conflict backup download is the
+    # keep-both path, and the toast is the warning.
+    screen(b,'knowledge')
+    b.locator('#knowledge-title').fill('QA cross-tab B note')
+    b.locator('#knowledge-content').fill('Written by the stale tab')
+    with b.expect_download(timeout=15000) as dl:
+        b.locator('#knowledge-form button[type="submit"]').click()
+        b.wait_for_function("document.querySelector('#toast').textContent.includes('Another tab')",timeout=10000)
+    backup=Path(dl.value.path()).read_bytes()
+    verify(b'QA cross-tab B note' in backup,'Conflict backup did not contain the stale tab work')
+    verify('Not saved' in b.locator('#save-indicator').inner_text(),'Stale tab did not report the refused save')
+    # The stored workspace still holds A's note only: reload B and it
+    # loads A's note, not its own.
+    b.reload(timeout=25000)
+    b.wait_for_function("document.documentElement.dataset.mmBoot==='ready'",timeout=16000)
+    screen(b,'knowledge')
+    b.locator('#knowledge-search').fill('QA cross-tab')
+    b.wait_for_function("document.querySelector('#knowledge-results').textContent.includes('QA cross-tab A note')",timeout=10000)
+    verify('QA cross-tab B note' not in b.locator('#knowledge-results').inner_text(),'Stale tab overwrote the newer workspace')
+    # Same-tab saves still work after a conflict elsewhere: A saves a
+    # second note with no conflict warning.
+    screen(a,'knowledge')
+    a.locator('#knowledge-title').fill('QA cross-tab A second note')
+    a.locator('#knowledge-content').fill('Written by the first tab after the conflict')
+    a.locator('#knowledge-form button[type="submit"]').click()
+    a.wait_for_function("document.querySelector('#note-count').textContent.includes('2 notes')",timeout=10000)
+    a.wait_for_timeout(900)
+    a.reload(timeout=25000)
+    a.wait_for_function("document.documentElement.dataset.mmBoot==='ready'",timeout=16000)
+    screen(a,'knowledge')
+    a.locator('#knowledge-search').fill('QA cross-tab')
+    a.wait_for_function("document.querySelector('#knowledge-results').textContent.includes('QA cross-tab A second note')",timeout=10000)
+    verify(not errors,'Page errors on the cross-tab page: '+str(errors))
+    ctx.close()
 CASES=[
  ('12-screen navigation and command palette',check_navigation),
  ('Workspace projects, files, runner, snapshots, JSON ZIP and import/export',check_workspace),
@@ -981,6 +1035,7 @@ CASES=[
  ('Failed and stopped chat requests do not restore the prompt or duplicate the message',check_chat_retry_no_duplicate),
  ('Chat prompt persists before provider dispatch, compare send, failed-save gate',check_chat_persist_before_dispatch),
  ('Chat double submit during save is guarded, failed save rolls back exactly',check_chat_double_submit_guard),
+ ('Cross-tab revision check: stale tab warns, exports a backup, does not overwrite',check_cross_tab_revision),
  ('Q22 network-free diagnostics and manual retry draft',check_local_connection_diagnostics_and_manual_retry),
  ('P14 local conversation search edit export delete',check_chat_management),
  ('Mocked three-stage workflow and stage cap',check_workflows),
