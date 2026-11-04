@@ -1070,6 +1070,44 @@ def check_usage_audit_window(p):
     verify(p.locator('#audit-rows tr').count() == 100, 'Audit table did not render exactly the 100-row window')
     verify(p.locator('#usage-total').inner_text() == '5', 'Usage total did not count all 5 terminal inference attempts')
     verify(p.locator('#usage-tokens').inner_text() == '60 tokens across 3 calls with reported usage; 2 calls reported no usage', 'Tokens line did not split reported from unreported calls: ' + p.locator('#usage-tokens').inner_text())
+
+def check_run_lifecycle_audit(p):
+    # Stage 3c (amended): a code run audits 'started' plus exactly one
+    # terminal event, and Telemetry CODE RUNS counts terminal events
+    # only. Run once to completion and once to an error, then read the
+    # audit log back out of IndexedDB and check the Telemetry headline.
+    screen(p,'workspace')
+    p.locator('#code-editor').fill('console.log("QA_RUN_OK");')
+    p.locator('#run-code').click()
+    p.wait_for_function("document.querySelector('#console-output').textContent.includes('QA_RUN_OK')",timeout=10000)
+    p.wait_for_function("document.querySelector('#console-output').textContent.includes('Execution complete.')",timeout=10000)
+    p.locator('#code-editor').fill('throw new Error("QA_RUN_BOOM");')
+    p.locator('#run-code').click()
+    p.wait_for_function("document.querySelector('#console-output').textContent.includes('QA_RUN_BOOM')",timeout=10000)
+    p.wait_for_timeout(1200)
+    runs=p.evaluate("""async () => {
+        const db = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return (state.audit || []).filter(e => e.op === 'run').map(e => e.status);
+    }""")
+    verify(runs.count('started') == 2, 'Run lifecycle did not audit two started events: ' + str(runs))
+    verify(runs.count('success') == 1, 'Completed run did not audit exactly one success: ' + str(runs))
+    verify(runs.count('failed') == 1, 'Errored run did not audit exactly one failed: ' + str(runs))
+    verify(len(runs) == 4, 'Run audit events were not exactly started+terminal per run: ' + str(runs))
+    screen(p,'telemetry')
+    headline=p.locator('#telemetry-headline').inner_text()
+    verify('CODE RUNS' in headline, 'Telemetry headline missing CODE RUNS')
+    verify('1 failed' in headline, 'Telemetry CODE RUNS failed subcount did not count the errored run: ' + headline)
 CASES=[
  ('12-screen navigation and command palette',check_navigation),
  ('Workspace projects, files, runner, snapshots, JSON ZIP and import/export',check_workspace),
@@ -1089,6 +1127,7 @@ CASES=[
  ('Chat double submit during save is guarded, failed save rolls back exactly',check_chat_double_submit_guard),
  ('Cross-tab revision check: stale tab warns, exports a backup, does not overwrite',check_cross_tab_revision),
  ('Usage audit window label and reported/unreported tokens split',check_usage_audit_window),
+ ('Code run lifecycle: started plus one terminal audit event, terminal-only Telemetry count',check_run_lifecycle_audit),
  ('Q22 network-free diagnostics and manual retry draft',check_local_connection_diagnostics_and_manual_retry),
  ('P14 local conversation search edit export delete',check_chat_management),
  ('Mocked three-stage workflow and stage cap',check_workflows),

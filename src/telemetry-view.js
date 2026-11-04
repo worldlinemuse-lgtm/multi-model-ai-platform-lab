@@ -49,7 +49,7 @@ export function providerBurndown(auditEvents){
 /* ---------- headline stats ---------- */
 export function headlineStats(auditEvents,otelSnap){
   const inf=(auditEvents||[]).filter(e=>e.op==='inference'&&e.status!=='requested');
-  const runs=(auditEvents||[]).filter(e=>e.op==='run');
+  const runs=(auditEvents||[]).filter(e=>e.op==='run'&&e.status!=='started'); // terminal-only: 'started' is the open event its terminal event closes, as with inference 'requested'
   const dev=deviceSnapshot();
   return [
     {label:'PROVIDER CALLS',value:String(inf.length),sub:`${inf.filter(e=>e.status==='success').length} succeeded`},
@@ -125,7 +125,7 @@ const HUD_METRICS=[
   {label:'Long tasks',get:d=>String(d.longTasks.count),warn:d=>d.longTasks.count>10},
   {label:'Spans',get:(d,s)=>String(s?.recorded??0),warn:()=>false},
   {label:'Provider calls',get:(d,s,a)=>String((a||[]).filter(e=>e.op==='inference'&&e.status!=='requested').length),warn:()=>false},
-  {label:'Code runs',get:(d,s,a)=>String((a||[]).filter(e=>e.op==='run').length),warn:()=>false},
+  {label:'Code runs',get:(d,s,a)=>String((a||[]).filter(e=>e.op==='run'&&e.status!=='started').length),warn:()=>false},
 ];
 
 export function hudUpdate(getState){
