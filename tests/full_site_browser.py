@@ -1018,6 +1018,58 @@ def check_cross_tab_revision(p):
     a.wait_for_function("document.querySelector('#knowledge-results').textContent.includes('QA cross-tab A second note')",timeout=10000)
     verify(not errors,'Page errors on the cross-tab page: '+str(errors))
     ctx.close()
+
+def check_usage_audit_window(p):
+    # Stage 2d: the Usage table shows only a window of the audit log, and
+    # the tokens line must split reported from unreported calls. Seed a
+    # 120-event audit state directly in IndexedDB, then reload so boot
+    # loads it: 3 reported inference attempts (10+20+30 tokens), 2
+    # unreported inference attempts, and 115 filler events.
+    p.wait_for_timeout(900)
+    seeded=p.evaluate("""async () => {
+        const open = () => new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const db = await open();
+        const get = () => new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        const state = await get();
+        const at = '2026-11-04T12:00:00.000Z';
+        const reported = [10, 20, 30].map((total, i) => ({
+            id: 'event-reported-' + i, at, op: 'inference', provider: 'groq',
+            status: 'success', model: 'llama-3.1-8b-instant',
+            usage: {prompt_tokens: total, completion_tokens: 0, total_tokens: total, source: 'test'}}));
+        const unreported = [0, 1].map(i => ({
+            id: 'event-unreported-' + i, at, op: 'inference', provider: 'groq',
+            status: 'failed', model: 'llama-3.1-8b-instant', usage: null}));
+        const filler = Array.from({length: 115}, (_, i) => ({
+            id: 'event-filler-' + i, at, op: 'run', provider: 'local',
+            status: 'started', usage: null}));
+        state.audit = [...reported, ...unreported, ...filler];
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readwrite');
+            tx.objectStore('kv').put(state, 'state.v1');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+        return true;
+    }""")
+    verify(seeded, 'Seeding the audit state in IndexedDB failed')
+    p.reload(timeout=25000)
+    p.wait_for_function("document.documentElement.dataset.mmBoot==='ready'", timeout=16000)
+    screen(p, 'usage')
+    verify(p.locator('#audit-window').count() == 1, 'Usage audit window label missing')
+    verify(p.locator('#audit-window').inner_text() == 'Showing latest 100 of 120 recorded events (audit log capped at 500).', 'Audit window label wrong: ' + p.locator('#audit-window').inner_text())
+    verify(p.locator('#audit-rows tr').count() == 100, 'Audit table did not render exactly the 100-row window')
+    verify(p.locator('#usage-total').inner_text() == '5', 'Usage total did not count all 5 terminal inference attempts')
+    verify(p.locator('#usage-tokens').inner_text() == '60 tokens across 3 calls with reported usage; 2 calls reported no usage', 'Tokens line did not split reported from unreported calls: ' + p.locator('#usage-tokens').inner_text())
 CASES=[
  ('12-screen navigation and command palette',check_navigation),
  ('Workspace projects, files, runner, snapshots, JSON ZIP and import/export',check_workspace),
@@ -1036,6 +1088,7 @@ CASES=[
  ('Chat prompt persists before provider dispatch, compare send, failed-save gate',check_chat_persist_before_dispatch),
  ('Chat double submit during save is guarded, failed save rolls back exactly',check_chat_double_submit_guard),
  ('Cross-tab revision check: stale tab warns, exports a backup, does not overwrite',check_cross_tab_revision),
+ ('Usage audit window label and reported/unreported tokens split',check_usage_audit_window),
  ('Q22 network-free diagnostics and manual retry draft',check_local_connection_diagnostics_and_manual_retry),
  ('P14 local conversation search edit export delete',check_chat_management),
  ('Mocked three-stage workflow and stage cap',check_workflows),
