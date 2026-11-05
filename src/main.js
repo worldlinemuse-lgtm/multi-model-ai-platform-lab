@@ -28,10 +28,7 @@ import {readBrowserCapabilities} from './capability-probes.js';
 import {probeWebGPUReadiness} from './ondevice-readiness.js';
 import {editLocalNote,findExactNoteDuplicates} from './note-tools.js';
 import {compareProjectFiles} from './snapshot-diff.js';
-
-const el=id=>document.getElementById(id);
-const qs=s=>document.querySelector(s);
-const qsa=s=>Array.from(document.querySelectorAll(s));
+import {el,qs,qsa,$,make,clearNode,formatTime,errorText} from './dom-helpers.js';
 const guideById=new Map((window.MM_PROVIDER_GUIDES||[]).map(g=>[g.id,g]));
 const vault=new KeyVault(()=>{try{crossTabChannel?.postMessage({type:'vault-saved'});}catch{}});
 // Real OpenTelemetry SDK (local-only). initOtelBridge() never blocks boot and
@@ -44,7 +41,6 @@ const bootTrace=workshopMetrics.begin('boot');
 let codeRunTrace=null,codeRunRequestId=null,codeRunStartedAt=0,codeRunLang='javascript';
 function finishCodeMetric(outcome,reason='none'){if(!codeRunTrace)return;const trace=codeRunTrace,requestId=codeRunRequestId,startedAt=codeRunStartedAt,lang=codeRunLang;workshopMetrics.finish(trace,outcome,reason);codeRunTrace=null;codeRunRequestId=null;const status=outcome==='ok'?'success':outcome==='error'?'failed':'stopped';audit('run',lang,status,null,{requestId,latencyMs:traceDuration(startedAt,performance.now())});}
 let state,run,labs,capabilityProbeEpoch=0,pythonRuntimeStatus='UNTESTED',lastRunLang=null,activeView='overview',activeNote=null,editingNoteId=null,saveTimer=null,toastTimer=null,activeChatControllers=[],chatSendPending=false,workflowController=null,storageFailed=false,recoveryRaw=null,recoveryKind=null,lastSeenRevision=null,lastSeenEntityRevision=null,lastEntityJson={},crossTabStale=false,crossTabBackupDone=false,crossTabChannel=null;
-const $=el;
 const bootMissingControls=new Set();
 function optionalControl(id){const node=$(id);if(!node)bootMissingControls.add(id);return node;}
 document.documentElement.dataset.mmBoot='starting';
@@ -52,10 +48,6 @@ let selectedBinaryName=null,selectedBinaryProjectId=null,binaryPreviewURL=null;
 let localEvidenceDraft='';let currentKnowledgePage=0;
 let q04Pending=null,q04PendingProjectId=null,q04PendingPath=null,q04Rollback=null,q04RollbackProjectId=null;
 function toast(message,error=false){const t=$('toast');t.textContent=String(message).slice(0,400);t.classList.toggle('error',error);t.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.hidden=true,5200);}
-function errorText(e){return typeof e==='string'?e:e?.message||String(e);}
-function formatTime(t){try{return new Date(t).toLocaleString()}catch{return String(t)}}
-function make(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=String(text);return node;}
-function clearNode(node){node.replaceChildren();return node;}
 function savedStatus(){return isDurableStorage()?'Saved on this device':'Temporary memory only — export a backup';}
 function openCrossTabChannel(){if(!('BroadcastChannel' in window))return;try{crossTabChannel=new BroadcastChannel(CROSS_TAB_CHANNEL);crossTabChannel.onmessage=(e)=>{const m=e?.data;if(!m)return;if(m.type==='vault-saved'){if(vault.isUnlocked){vault.noteExternalChange();toast('Vault saved in another tab — lock and unlock this tab before changing keys.',true);}return;}if(m.type!=='workspace-saved'||!Number.isSafeInteger(m.revision))return;if(lastSeenRevision!==null&&m.revision>lastSeenRevision){const ind=$('save-indicator');if(ind)ind.textContent='Another tab saved a newer workspace — reload before editing';toast('Workspace saved in another tab — reload this tab before editing, or your next save will not overwrite it.',true);}};}catch{}}
 function broadcastWorkspaceSaved(){try{crossTabChannel?.postMessage({type:'workspace-saved',revision:lastSeenRevision});}catch{}}
