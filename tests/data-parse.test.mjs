@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCSV, parseDataset} from '../src/labs.js';
+import {parseCSV, parseDataset} from '../src/data-parse.js';
 import {groupNumericStats, transformDataset} from '../src/data-tools.js';
 
 test('duplicate CSV headers are renamed, all values kept', () => {

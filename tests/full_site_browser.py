@@ -1169,6 +1169,24 @@ def check_message_truncation(p):
     p.locator('#chat-input').fill('Say something long')
     p.locator('#send-chat').click()
     p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('[truncated')",timeout=15000)
+    # The message renders before the debounced save (300 ms) writes it to
+    # IndexedDB, so wait for the stored state to catch up before reading.
+    p.wait_for_function("""async () => {
+        const db = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        db.close();
+        const t = state.threads.find(x => x.id === state.activeThreadId) || state.threads[0];
+        return t.messages.some(m => m.role === 'assistant');
+    }""",timeout=15000)
     st=p.evaluate("""async () => {
         const db = await new Promise((resolve, reject) => {
             const r = indexedDB.open('mm-studio-lab-b03', 1);
@@ -1184,7 +1202,8 @@ def check_message_truncation(p):
         db.close();
         return state;
     }""")
-    msgs=st['threads'][0]['messages']
+    t=next(x for x in st['threads'] if x['id']==st['activeThreadId'])
+    msgs=t['messages']
     assistant=[m for m in msgs if m.get('role')=='assistant']
     verify(len(assistant)==1,'Expected one stored assistant message')
     verify('[truncated' in assistant[0]['content'],'Stored assistant message has no truncation marker')

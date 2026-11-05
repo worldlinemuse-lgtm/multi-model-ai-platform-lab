@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {freshState,validateState,clone,MAX_NOTES} from '../src/core.js';
-import {parseDataset,analyzeDataset,numericValue} from '../src/labs.js';
+import {parseDataset,analyzeDataset,numericValue} from '../src/data-parse.js';
 import {parseReportedUsage,callProvider} from '../src/provider-api.js';
 
 const valid=()=>freshState();

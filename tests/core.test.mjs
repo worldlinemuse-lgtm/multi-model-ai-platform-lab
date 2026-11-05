@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {safeName,safeFiles,starterProject,freshState,validateState,migrateLegacy,PROVIDERS,CAPABILITIES,FLOW_TEMPLATES} from '../src/core.js';
-import {parseCSV,parseDataset,analyzeDataset} from '../src/labs.js';
+import {parseCSV,parseDataset,analyzeDataset} from '../src/data-parse.js';
 test('project validation enforces path and length constraints',()=>{assert.ok(safeName('src/index.html'));assert.ok(!safeName('../private'));assert.ok(!safeName('.hidden'));assert.ok(!safeName('/etc/passwd'));assert.ok(safeFiles({'index.html':'hello'}));assert.ok(!safeFiles({'../file':'x'}));const p=starterProject();assert.ok(safeFiles(p.files));const state=freshState();assert.ok(validateState(state));assert.equal(state.projects.length,1);state.projects[0].files['../secret']='bad';assert.equal(validateState(state),false);});
 test('legacy B0.1 B0.2 projects migrate',()=>{const migrated=migrateLegacy({active:'main.js',files:{'main.js':'console.log(5)'}});assert.ok(validateState(migrated));assert.equal(migrated.projects[0].files['main.js'],'console.log(5)');});
 test('provider registry has eight distinct recurring routes',()=>{assert.equal(PROVIDERS.length,8);assert.equal(new Set(PROVIDERS.map(x=>x.id)).size,8);assert.ok(CAPABILITIES.length>=30);assert.deepEqual(Object.keys(FLOW_TEMPLATES),['research','code','explain']);});

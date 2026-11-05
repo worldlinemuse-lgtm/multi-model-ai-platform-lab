@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseDataset} from '../src/labs.js';
+import {parseDataset} from '../src/data-parse.js';
 import {freshState,clone,validateState} from '../src/core.js';
 import {DATA_TRANSFORMS,transformDataset,serializeDataset,validateSavedDatasets,MAX_SAVED_DATASET_CHARS} from '../src/data-tools.js';
 

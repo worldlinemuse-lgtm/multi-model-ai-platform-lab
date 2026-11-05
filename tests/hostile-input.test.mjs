@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 // not a hang, not a corrupt state.
 
 // We import the pure functions directly. DOM-dependent modules are not loaded.
-import {parseDataset} from '../src/labs.js';
+import {parseDataset} from '../src/data-parse.js';
 
 const HOSTILE = [
   '',                          // empty
