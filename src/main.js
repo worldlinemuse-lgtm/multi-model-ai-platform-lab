@@ -32,7 +32,7 @@ const el=id=>document.getElementById(id);
 const qs=s=>document.querySelector(s);
 const qsa=s=>Array.from(document.querySelectorAll(s));
 const guideById=new Map((window.MM_PROVIDER_GUIDES||[]).map(g=>[g.id,g]));
-const vault=new KeyVault();
+const vault=new KeyVault(()=>{try{crossTabChannel?.postMessage({type:'vault-saved'});}catch{}});
 // Real OpenTelemetry SDK (local-only). initOtelBridge() never blocks boot and
 // never throws: the bridge attaches asynchronously when the bundles load.
 // Until then (and if they are missing or broken) the workshop runs exactly
@@ -56,7 +56,7 @@ function formatTime(t){try{return new Date(t).toLocaleString()}catch{return Stri
 function make(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=String(text);return node;}
 function clearNode(node){node.replaceChildren();return node;}
 function savedStatus(){return isDurableStorage()?'Saved on this device':'Temporary memory only — export a backup';}
-function openCrossTabChannel(){if(!('BroadcastChannel' in window))return;try{crossTabChannel=new BroadcastChannel(CROSS_TAB_CHANNEL);crossTabChannel.onmessage=(e)=>{const m=e?.data;if(!m||m.type!=='workspace-saved'||!Number.isSafeInteger(m.revision))return;if(lastSeenRevision!==null&&m.revision>lastSeenRevision){const ind=$('save-indicator');if(ind)ind.textContent='Another tab saved a newer workspace — reload before editing';toast('Workspace saved in another tab — reload this tab before editing, or your next save will not overwrite it.',true);}};}catch{}}
+function openCrossTabChannel(){if(!('BroadcastChannel' in window))return;try{crossTabChannel=new BroadcastChannel(CROSS_TAB_CHANNEL);crossTabChannel.onmessage=(e)=>{const m=e?.data;if(!m)return;if(m.type==='vault-saved'){if(vault.isUnlocked){vault.noteExternalChange();toast('Vault saved in another tab — lock and unlock this tab before changing keys.',true);}return;}if(m.type!=='workspace-saved'||!Number.isSafeInteger(m.revision))return;if(lastSeenRevision!==null&&m.revision>lastSeenRevision){const ind=$('save-indicator');if(ind)ind.textContent='Another tab saved a newer workspace — reload before editing';toast('Workspace saved in another tab — reload this tab before editing, or your next save will not overwrite it.',true);}};}catch{}}
 function broadcastWorkspaceSaved(){try{crossTabChannel?.postMessage({type:'workspace-saved',revision:lastSeenRevision});}catch{}}
 async function writeStateChecked(){if(crossTabStale){const err=Error('Cross-tab conflict: this tab is stale; another tab saved a newer workspace.');err.crossTab=true;throw err;}const stored=await read('state.v1');if(isCrossTabConflict(stored,lastSeenRevision)){crossTabStale=true;if(!crossTabBackupDone){crossTabBackupDone=true;try{exportAll();}catch{}}const ind=$('save-indicator');if(ind)ind.textContent='Not saved — another tab saved a newer workspace';toast('Another tab saved a newer workspace. This tab did not overwrite it; a backup of this tab was exported. Reload to load the newer workspace.',true);const err=Error(crossTabConflictMessage(stored,lastSeenRevision));err.crossTab=true;throw err;}state.revision=nextRevision(lastSeenRevision,stored);await write('state.v1',state);lastSeenRevision=state.revision;broadcastWorkspaceSaved();}
 function saveSoon(){if(storageFailed||crossTabStale)return;clearTimeout(saveTimer);const status=$('save-indicator');if(status)status.textContent='Saving…';saveTimer=setTimeout(async()=>{const span=workshopMetrics.begin('save');try{await writeStateChecked();workshopMetrics.finish(span,'ok');if(status)status.textContent=savedStatus();}catch(e){workshopMetrics.finish(span,'error','storage-error');if(e.crossTab){if(status)status.textContent='Not saved — another tab saved a newer workspace';return;}storageFailed=true;if(status)status.textContent='Save failed — export a backup';toast('Local storage failed: '+errorText(e),true);}},300);}
@@ -440,8 +440,9 @@ function renderWorkflows(){
   b.addEventListener('click',()=>{$('workflow-results').textContent=workflowText(w)||'No finished stage output yet.';});host.append(b);
  }
  if(!state.workflows.length)host.textContent='No runs recorded.';
- $('workflow-resume').disabled=!!workflowController||!state.workflows.some(w=>Array.isArray(w.plan)&&w.steps.length<w.plan.length&&['running','stopped'].includes(w.status));
+ $('workflow-resume').disabled=!!workflowController||!state.workflows.some(workflowResumable);
 }
+function workflowResumable(w){if(!Array.isArray(w.plan))return false;if(['running','stopped'].includes(w.status))return w.steps.length<w.plan.length;if(w.status==='failed')return w.steps.at(-1)?.status==='failed';return false;}
 async function runWorkflowCheckpoint(result){
  if(workflowController)return toast('Stop the active workflow first.',true);
  if(!validateSavedWorkflowPlan(result.plan))return toast('Stored plan validation failed.',true);
@@ -488,11 +489,12 @@ async function executeWorkflow(event){
 }
 async function resumeWorkflow(){
  if(workflowController)return;
- const result=state.workflows.find(w=>Array.isArray(w.plan)&&w.steps.length<w.plan.length&&['running','stopped'].includes(w.status));
+ const result=state.workflows.find(workflowResumable);
  if(!result)return toast('No paused workflow to resume.',true);
  if(!validateSavedWorkflowPlan(result.plan))return toast('Saved plan integrity check failed.',true);
- if(result.plan.slice(result.steps.length).some(s=>!vault.get(s.route)))return toast('Unlock the required saved model routes before resuming.',true);
- if(!confirm('Resume '+(result.plan.length-result.steps.length)+' remaining stage(s)? An interrupted request may already have consumed quota and may be reissued. Resume is manual only; no paid fallback.'))return;
+ const retryIndex=(result.status==='failed'&&result.steps.at(-1)?.status==='failed')?result.steps.length-1:result.steps.length;
+ if(result.plan.slice(retryIndex).some(s=>!vault.get(s.route)))return toast('Unlock the required saved model routes before resuming.',true);
+ if(!confirm('Resume '+(result.plan.length-retryIndex)+' remaining stage(s)? An interrupted request may already have consumed quota and may be reissued. Resume is manual only; no paid fallback.'))return;
  await runWorkflowCheckpoint(result);
 }
 

@@ -1108,6 +1108,52 @@ def check_run_lifecycle_audit(p):
     headline=p.locator('#telemetry-headline').inner_text()
     verify('CODE RUNS' in headline, 'Telemetry headline missing CODE RUNS')
     verify('1 failed' in headline, 'Telemetry CODE RUNS failed subcount did not count the errored run: ' + headline)
+
+def check_workflow_failed_retry(p):
+    # Stage 2c: a failed workflow run is resumable, and resume retries the
+    # failed stage only, keeping the completed stage output.
+    mock_provider(p)
+    setup_vault(p)
+    screen(p,'workflows')
+    p.locator('#workflow-route').select_option('groq')
+    p.locator('#workflow-template').select_option('explain')
+    p.locator('#workflow-stages').fill('First pass\nSecond pass')
+    p.locator('#workflow-goal').fill('Describe test execution only')
+    p.locator('#workflow-confirm').check()
+    p.locator('#workflow-start').click()
+    p.wait_for_function("document.querySelector('#workflow-history').textContent.includes('complete')",timeout=22000)
+    p.evaluate("""async () => {
+        const db = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readwrite');
+            const store = tx.objectStore('kv');
+            const req = store.get('state.v1');
+            req.onsuccess = () => {
+                const s = req.result;
+                const w = s.workflows[0];
+                w.status = 'failed';
+                w.steps[1] = {stage: w.steps[1].stage, provider: 'groq', status: 'failed', content: 'synthetic failure'};
+                store.put(s, 'state.v1');
+            };
+            req.onerror = () => reject(req.error);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+    }""")
+    p.reload()
+    p.wait_for_function("document.documentElement.dataset.mmBoot === 'ready'",timeout=20000)
+    setup_vault(p)
+    screen(p,'workflows')
+    verify(not p.locator('#workflow-resume').is_disabled(),'Failed workflow run is not resumable')
+    approve(p)
+    p.locator('#workflow-resume').click()
+    p.wait_for_function("document.querySelector('#workflow-history').textContent.includes('complete')",timeout=22000)
+    verify(p.locator('#workflow-results').inner_text().count('SYNTHETIC ACCEPTANCE RESPONSE')==2,'Resume did not retry only the failed stage')
 CASES=[
  ('12-screen navigation and command palette',check_navigation),
  ('Workspace projects, files, runner, snapshots, JSON ZIP and import/export',check_workspace),
@@ -1128,6 +1174,7 @@ CASES=[
  ('Cross-tab revision check: stale tab warns, exports a backup, does not overwrite',check_cross_tab_revision),
  ('Usage audit window label and reported/unreported tokens split',check_usage_audit_window),
  ('Code run lifecycle: started plus one terminal audit event, terminal-only Telemetry count',check_run_lifecycle_audit),
+ ('Workflow failed run resumes by retrying only the failed stage',check_workflow_failed_retry),
  ('Q22 network-free diagnostics and manual retry draft',check_local_connection_diagnostics_and_manual_retry),
  ('P14 local conversation search edit export delete',check_chat_management),
  ('Mocked three-stage workflow and stage cap',check_workflows),
