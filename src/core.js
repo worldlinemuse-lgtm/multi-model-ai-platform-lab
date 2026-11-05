@@ -7,6 +7,8 @@ export const MAX_FILE_LENGTH = 500000;
 export const MAX_PROJECT_BYTES = 1250000;
 export const MAX_NOTES = 250;
 export const MAX_AUDIT = 500;
+export const MAX_STORED_MESSAGE_CHARS = 30000;
+export function capMessageContent(content){if(typeof content!=='string'||content.length<=MAX_STORED_MESSAGE_CHARS)return content;return content.slice(0,MAX_STORED_MESSAGE_CHARS)+`\n\n[truncated — response was ${content.length} characters, stored first ${MAX_STORED_MESSAGE_CHARS}; usage counts are from the provider, not the truncated text]`;}
 export const PROVIDERS = Object.freeze([
   {id:'groq', name:'GroqCloud',model:'openai/gpt-oss-20b',window:'Minute / day',transport:'OpenAI-compatible',kind:'key'},
   {id:'openrouter',name:'OpenRouter Free',model:'openrouter/free',window:'Minute / day',transport:'OpenAI-compatible',kind:'key'},
