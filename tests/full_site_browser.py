@@ -1170,39 +1170,47 @@ def check_message_truncation(p):
     p.locator('#send-chat').click()
     p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('[truncated')",timeout=15000)
     # The message renders before the debounced save (300 ms) writes it to
-    # IndexedDB, so wait for the stored state to catch up before reading.
-    p.wait_for_function("""async () => {
-        const db = await new Promise((resolve, reject) => {
-            const r = indexedDB.open('mm-studio-lab-b03', 1);
-            r.onsuccess = () => resolve(r.result);
-            r.onerror = () => reject(r.error);
-        });
-        const state = await new Promise((resolve, reject) => {
-            const tx = db.transaction('kv', 'readonly');
-            const req = tx.objectStore('kv').get('state.v1');
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        });
-        db.close();
-        const t = state.threads.find(x => x.id === state.activeThreadId) || state.threads[0];
-        return t.messages.some(m => m.role === 'assistant');
-    }""",timeout=15000)
-    st=p.evaluate("""async () => {
-        const db = await new Promise((resolve, reject) => {
-            const r = indexedDB.open('mm-studio-lab-b03', 1);
-            r.onsuccess = () => resolve(r.result);
-            r.onerror = () => reject(r.error);
-        });
-        const state = await new Promise((resolve, reject) => {
-            const tx = db.transaction('kv', 'readonly');
-            const req = tx.objectStore('kv').get('state.v1');
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        });
-        db.close();
-        return state;
-    }""")
-    t=next(x for x in st['threads'] if x['id']==st['activeThreadId'])
+    # IndexedDB, and a later debounced save can still land after an earlier
+    # one, so a single re-read after a presence check is racy: the wait
+    # passed once while the re-read found zero assistant messages
+    # (CI run 42082955732, first attempt on 84b2d2c). Poll instead until
+    # the stored state itself settles: read it, check the full expected
+    # shape, wait out one debounce window, read it again, and only then
+    # return that second snapshot for the asserts below. No product code
+    # changes; this is a test-only hardening.
+    st = p.wait_for_function("""async () => {
+        const readState = async () => {
+            const db = await new Promise((resolve, reject) => {
+                const r = indexedDB.open('mm-studio-lab-b03', 1);
+                r.onsuccess = () => resolve(r.result);
+                r.onerror = () => reject(r.error);
+            });
+            const state = await new Promise((resolve, reject) => {
+                const tx = db.transaction('kv', 'readonly');
+                const req = tx.objectStore('kv').get('state.v1');
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+            db.close();
+            return state;
+        };
+        const settled = (state) => {
+            if (!state || !Array.isArray(state.threads)) return null;
+            const t = state.threads.find(x => x.id === state.activeThreadId) || state.threads[0];
+            if (!t || !Array.isArray(t.messages)) return null;
+            const assistant = t.messages.filter(m => m.role === 'assistant');
+            if (assistant.length !== 1) return null;
+            const c = assistant[0].content || '';
+            if (!c.includes('[truncated') || !c.includes('35000 characters') || c.length >= 35000) return null;
+            const audit = (state.audit || []).filter(a => a.op === 'inference' && a.status === 'success');
+            if (audit.length !== 1 || !audit[0].usage || audit[0].usage.total_tokens !== 30) return null;
+            return state;
+        };
+        if (!settled(await readState())) return false;
+        await new Promise(r => setTimeout(r, 400));
+        return settled(await readState()) || false;
+    }""", timeout=15000)
+    t = next((x for x in st['threads'] if x['id'] == st['activeThreadId']), st['threads'][0])
     msgs=t['messages']
     assistant=[m for m in msgs if m.get('role')=='assistant']
     verify(len(assistant)==1,'Expected one stored assistant message')
