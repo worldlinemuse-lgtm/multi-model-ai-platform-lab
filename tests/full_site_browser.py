@@ -1209,7 +1209,7 @@ def check_message_truncation(p):
         if (!settled(await readState())) return false;
         await new Promise(r => setTimeout(r, 400));
         return settled(await readState()) || false;
-    }""", timeout=15000)
+    }""", timeout=15000).json_value()
     t = next((x for x in st['threads'] if x['id'] == st['activeThreadId']), st['threads'][0])
     msgs=t['messages']
     assistant=[m for m in msgs if m.get('role')=='assistant']
