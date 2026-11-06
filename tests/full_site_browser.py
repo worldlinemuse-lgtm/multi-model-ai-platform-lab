@@ -1174,11 +1174,16 @@ def check_message_truncation(p):
     # one, so a single re-read after a presence check is racy: the wait
     # passed once while the re-read found zero assistant messages
     # (CI run 42082955732, first attempt on 84b2d2c). Poll instead until
-    # the stored state itself settles: read it, check the full expected
-    # shape, wait out one debounce window, read it again, and only then
-    # return that second snapshot for the asserts below. No product code
-    # changes; this is a test-only hardening.
-    st = p.wait_for_function("""async () => {
+    # the stored state itself settles — read it, check the full expected
+    # shape, wait out one debounce window, read it again — and only then
+    # fetch it once with evaluate for the asserts below. The wait only
+    # answers true/false: returning the state object from the wait gave
+    # back a bool at the subscript line instead (CI run 42212606837 on
+    # 6d31f86: TypeError: 'bool' object is not subscriptable), so the
+    # snapshot always comes from evaluate, which is the read the old
+    # code already proved returns the dict. No product code changes;
+    # this is a test-only hardening.
+    p.wait_for_function("""async () => {
         const readState = async () => {
             const db = await new Promise((resolve, reject) => {
                 const r = indexedDB.open('mm-studio-lab-b03', 1);
@@ -1208,8 +1213,23 @@ def check_message_truncation(p):
         };
         if (!settled(await readState())) return false;
         await new Promise(r => setTimeout(r, 400));
-        return settled(await readState()) || false;
-    }""", timeout=15000).json_value()
+        return !!settled(await readState());
+    }""", timeout=15000)
+    st = p.evaluate("""async () => {
+        const db = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return state;
+    }""")
     t = next((x for x in st['threads'] if x['id'] == st['activeThreadId']), st['threads'][0])
     msgs=t['messages']
     assistant=[m for m in msgs if m.get('role')=='assistant']
