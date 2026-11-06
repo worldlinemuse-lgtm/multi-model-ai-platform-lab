@@ -73,6 +73,42 @@ test('workspace store: writeStateChecked refuses when another tab moved the mani
   assert.equal(s.isCrossTabStale, true);
 });
 
+test('workspace store: overlapping checked writes cannot commit a stale snapshot last', async () => {
+  // 2026-11-06: a debounced saveSoon (fired while a provider call was
+  // still in flight) and the final saveNow ran writeStateChecked
+  // concurrently; the overlap corrupts the revision bookkeeping either
+  // way — the later invocation can trip a spurious cross-tab conflict
+  // (same tab, not another tab) or the earlier invocation's pre-response
+  // snapshot can commit after the final save, so stored state loses the
+  // response (CI run 42215709359: the 3b case's settle-wait saw the
+  // message, the immediate re-read found none). Checked writes are
+  // serialized, so the later invocation re-reads stored state and
+  // writes last.
+  const {ctx, store} = fakeCtx();
+  let releaseGate;
+  const gated = new Promise((r) => { releaseGate = r; });
+  let armGate = false;
+  let gateTaken = false;
+  ctx.write = async (k, v) => {
+    const snapshot = structuredClone(v);
+    if (k === 'state.v1' && armGate) { armGate = false; gateTaken = true; await gated; }
+    store.set(k, snapshot);
+  };
+  const s = createWorkspaceStore(ctx);
+  await s.adoptStoredWorkspace(ctx.getState());
+  await s.saveNow();
+  armGate = true;
+  const first = s.writeStateChecked();
+  for (let i = 0; i < 100 && !gateTaken; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(gateTaken, true, 'first invocation never reached its state.v1 write');
+  ctx.getState().threads[0].messages.push({role: 'assistant', content: 'late response'});
+  const second = s.writeStateChecked();
+  releaseGate();
+  await Promise.all([first, second]);
+  const stored = store.get('state.v1');
+  assert.equal(stored.threads[0].messages.filter((m) => m.role === 'assistant').length, 1, 'stored state lost the late response to a stale overlapping save');
+});
+
 test('workspace store: audit records the event, caps at 500, renders, and saves', async () => {
   const {ctx, store, calls} = fakeCtx();
   const s = createWorkspaceStore(ctx);
