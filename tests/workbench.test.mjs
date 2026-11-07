@@ -89,7 +89,8 @@ test('workbench: renderAudit totals tokens and splits reported/unreported', () =
   w.renderAudit();
   assert.equal($('usage-total').textContent, 2);
   assert.equal($('usage-success').textContent, 1);
-  assert.match($('usage-tokens').textContent, /30 tokens across 1 calls with reported usage; 1 calls reported no usage/);
+  assert.equal($('usage-tokens').textContent, '30 tokens');
+  assert.match($('usage-tokens-note').textContent, /across 1 calls with reported usage; 1 calls reported no usage/);
 });
 
 test('workbench: workflowResumable covers running, failed and finished runs', () => {

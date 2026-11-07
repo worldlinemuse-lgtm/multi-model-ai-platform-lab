@@ -1075,7 +1075,8 @@ def check_usage_audit_window(p):
     verify(p.locator('#audit-window').inner_text() == 'Showing latest 100 of 120 recorded events (audit log capped at 500).', 'Audit window label wrong: ' + p.locator('#audit-window').inner_text())
     verify(p.locator('#audit-rows tr').count() == 100, 'Audit table did not render exactly the 100-row window')
     verify(p.locator('#usage-total').inner_text() == '5', 'Usage total did not count all 5 terminal inference attempts')
-    verify(p.locator('#usage-tokens').inner_text() == '60 tokens across 3 calls with reported usage; 2 calls reported no usage', 'Tokens line did not split reported from unreported calls: ' + p.locator('#usage-tokens').inner_text())
+    verify(p.locator('#usage-tokens').inner_text() == '60 tokens', 'Tokens total wrong: ' + p.locator('#usage-tokens').inner_text())
+    verify(p.locator('#usage-tokens-note').inner_text() == 'across 3 calls with reported usage; 2 calls reported no usage', 'Tokens line did not split reported from unreported calls: ' + p.locator('#usage-tokens-note').inner_text())
 
 def check_run_lifecycle_audit(p):
     # Stage 3c (amended): a code run audits 'started' plus exactly one
