@@ -13,6 +13,11 @@ def verify(test, message):
     if not test: raise AssertionError(message)
 def screen(p,name):
     p.locator('[data-view="'+name+'"]').first.click()
+    # The view renders a beat after the click on a cold hosted load
+    # (service-worker install + module load over CDN); is_visible()
+    # does not wait, so asserting immediately flaked the hosted
+    # navigation case (CI run 42251370553, attempt 1: workspace).
+    p.locator('[data-screen="'+name+'"]').wait_for(state='visible',timeout=10000)
     verify(p.locator('[data-screen="'+name+'"]').is_visible(),'Screen did not open: '+name)
 def approve(p,text=''):
     p.once('dialog',lambda d:d.accept(text))
