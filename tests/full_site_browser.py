@@ -2,7 +2,7 @@
 Run with --base-url on actual Chromium runner. Each case uses a fresh browser profile.
 Synthetic provider responses are NOT proof of real provider connectivity.
 """
-import argparse,base64,io,json,os,sys,traceback,zipfile,zlib,struct
+import argparse,base64,io,json,os,sys,time,traceback,zipfile,zlib,struct
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
@@ -1180,14 +1180,12 @@ def check_message_truncation(p):
     # passed once while the re-read found zero assistant messages
     # (CI run 42082955732, first attempt on 84b2d2c). Poll instead until
     # the stored state itself settles — read it, check the full expected
-    # shape, wait out one debounce window, read it again — and only then
-    # fetch it once with evaluate for the asserts below. The wait only
+    # shape, wait out one debounce window, read it again. The wait only
     # answers true/false: returning the state object from the wait gave
     # back a bool at the subscript line instead (CI run 42212606837 on
     # 6d31f86: TypeError: 'bool' object is not subscriptable), so the
     # snapshot always comes from evaluate, which is the read the old
-    # code already proved returns the dict. No product code changes;
-    # this is a test-only hardening.
+    # code already proved returns the dict.
     p.wait_for_function("""async () => {
         const readState = async () => {
             const db = await new Promise((resolve, reject) => {
@@ -1220,21 +1218,69 @@ def check_message_truncation(p):
         await new Promise(r => setTimeout(r, 400));
         return !!settled(await readState());
     }""", timeout=15000)
-    st = p.evaluate("""async () => {
-        const db = await new Promise((resolve, reject) => {
-            const r = indexedDB.open('mm-studio-lab-b03', 1);
-            r.onsuccess = () => resolve(r.result);
-            r.onerror = () => reject(r.error);
-        });
-        const state = await new Promise((resolve, reject) => {
-            const tx = db.transaction('kv', 'readonly');
-            const req = tx.objectStore('kv').get('state.v1');
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        });
-        db.close();
-        return state;
-    }""")
+    # Even after the wait, one evaluate read has disagreed with it more
+    # than once on hosted runs (the wait saw the settled state, the
+    # immediate read found no assistant message — CI run 42215709359 on
+    # 30fefd6, and again on e3caf5c after the save-serialization fix),
+    # while the same commit passes locally. So re-poll the evaluate read
+    # until the settled shape is observed in TWO consecutive reads 400
+    # ms apart, and only then assert on the second snapshot. If the
+    # state never settles, fail loudly with the last-seen state printed,
+    # so the next failure carries a diagnosis instead of a mystery.
+    def read_stored_state():
+        return p.evaluate("""async () => {
+            const db = await new Promise((resolve, reject) => {
+                const r = indexedDB.open('mm-studio-lab-b03', 1);
+                r.onsuccess = () => resolve(r.result);
+                r.onerror = () => reject(r.error);
+            });
+            const state = await new Promise((resolve, reject) => {
+                const tx = db.transaction('kv', 'readonly');
+                const req = tx.objectStore('kv').get('state.v1');
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+            db.close();
+            return state;
+        }""")
+    def settled_shape(state):
+        if not state or not isinstance(state.get('threads'), list):
+            return False
+        threads = state['threads']
+        t = next((x for x in threads if x.get('id') == state.get('activeThreadId')), threads[0] if threads else None)
+        if not t or not isinstance(t.get('messages'), list):
+            return False
+        assistant = [m for m in t['messages'] if m.get('role') == 'assistant']
+        if len(assistant) != 1:
+            return False
+        c = assistant[0].get('content') or ''
+        if '[truncated' not in c or '35000 characters' not in c or len(c) >= 35000:
+            return False
+        audit = [a for a in (state.get('audit') or []) if a.get('op') == 'inference' and a.get('status') == 'success']
+        return len(audit) == 1 and (audit[0].get('usage') or {}).get('total_tokens') == 30
+    deadline = time.time() + 15
+    st = None
+    last = None
+    while time.time() < deadline:
+        last = read_stored_state()
+        if settled_shape(last):
+            time.sleep(0.4)
+            st = read_stored_state()
+            if settled_shape(st):
+                break
+            st = None
+        time.sleep(0.1)
+    if st is None:
+        if last is None:
+            summary = 'no state could be read from IndexedDB'
+        else:
+            summary = ('threads=%d active=%s assistant_per_thread=%s audit_success=%d revision=%s' % (
+                len(last.get('threads') or []),
+                last.get('activeThreadId'),
+                [len([m for m in (t.get('messages') or []) if m.get('role') == 'assistant']) for t in (last.get('threads') or [])],
+                len([a for a in (last.get('audit') or []) if a.get('op') == 'inference' and a.get('status') == 'success']),
+                last.get('revision')))
+        verify(False, 'Stored state never settled: ' + summary)
     t = next((x for x in st['threads'] if x['id'] == st['activeThreadId']), st['threads'][0])
     msgs=t['messages']
     assistant=[m for m in msgs if m.get('role')=='assistant']
