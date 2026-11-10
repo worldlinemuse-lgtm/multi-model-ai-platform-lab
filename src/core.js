@@ -64,6 +64,17 @@ export const FLOW_TEMPLATES = Object.freeze({
 });
 export function uid(prefix='id'){return `${prefix}-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`;}
 export const clone = value => { try{ return JSON.parse(JSON.stringify(value)); }catch{ return null; } };
+// Why clone() returned null: the reason splitState reports when an entity
+// record is not serializable. clone() swallows the cause by design (its
+// callers treat null as "cannot copy"); this names it for the error only.
+export function cloneFailure(value){
+  if(value===undefined)return 'value is undefined';
+  let json;
+  try{ json=JSON.stringify(value); }catch(e){ return e?.message||'JSON.stringify failed'; }
+  if(json===undefined)return 'JSON.stringify returned undefined';
+  try{ JSON.parse(json); }catch(e){ return e?.message||'JSON.parse failed'; }
+  return null;
+}
 export const now = () => new Date().toISOString();
 export const providerById = id => PROVIDERS.find(p=>p.id===id);
 export function safeName(name){return typeof name==='string' && name.length<=100 && /^[\p{L}\p{N}_-][\p{L}\p{N}_.+@ /-]*$/u.test(name) && !name.endsWith('/') && name.split('/').every(part=>part.length>0&&part!=='.'&&part!=='..'&&!part.startsWith('.'));}

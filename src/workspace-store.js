@@ -28,6 +28,12 @@ export function createWorkspaceStore(ctx){
   let entityLoaded=null,entityManifest=null,entityError=null;
   try{const loaded=await loadEntityState(read);if(loaded){entityLoaded=loaded.state;entityManifest=loaded.manifest;}}catch(e){entityError=e;}
   if(validateState(stored)){
+   // Stored states that predate saved datasets carry no datasets list.
+   // validateState allows the missing list, but splitState cannot save
+   // it — every later save failed with "not serializable: datasets"
+   // (2026-11-08). Fill it here, before the state goes live, so the
+   // first save after load succeeds and the migration can run.
+   if(stored.datasets===undefined)stored.datasets=[];
    if(entityLoaded&&entityLoaded.revision>revisionOf(stored)){ctx.setState(entityLoaded);lastSeenRevision=entityLoaded.revision;lastSeenEntityRevision=entityManifest.revision;lastEntityJson=snapshotEntityJson(ctx.getState());return true;}
    ctx.setState(stored);lastSeenRevision=revisionOf(stored);ctx.getState().revision=lastSeenRevision;lastEntityJson=snapshotEntityJson(ctx.getState());
    try{await migrateToEntities(read,write,ctx.getState());lastSeenEntityRevision=ctx.getState().revision;}catch{}

@@ -1,4 +1,4 @@
-import {APP_KEY, clone, freshState, validateState} from './core.js';
+import {APP_KEY, clone, cloneFailure, freshState, validateState} from './core.js';
 // Stage 3a: per-entity workspace persistence.
 //
 // The workspace is still saved as one logical unit, but it is stored as
@@ -28,7 +28,7 @@ export function splitState(state) {
   const records = {};
   for (const name of ENTITY_KEYS) {
     const value = clone(state[name]);
-    if (value === null) throw Error(`Entity record not serializable: ${name}`);
+    if (value === null) throw Error(`Entity record not serializable: ${name} (${cloneFailure(state[name]) ?? 'unknown reason'})`);
     records[name] = {revision: state.revision, value};
   }
   return {manifest, records};

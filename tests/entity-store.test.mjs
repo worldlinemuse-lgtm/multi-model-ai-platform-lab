@@ -55,3 +55,16 @@ test('entity store: migration is copy-only and never overwrites an existing mani
   assert.deepEqual(loaded.state.projects[0].files, state.projects[0].files);
   assert.equal(await migrateToEntities(read, write, state), false);
 });
+
+test('entity store: a missing datasets list is named with its cause, and a BigInt inside datasets is named', () => {
+  // 2026-11-08: Robbie's lab hit "Entity record not serializable:
+  // datasets" on every save. The stored state predated saved datasets,
+  // so datasets was undefined — valid per validateState, fatal per
+  // splitState — and the message said nothing about why.
+  const older = freshState();
+  delete older.datasets;
+  assert.throws(() => splitState(older), /Entity record not serializable: datasets \(value is undefined\)/);
+  const big = freshState();
+  big.datasets = [{id: 'd1', title: 't', content: 'x', created: 'now', junk: 10n}];
+  assert.throws(() => splitState(big), /Entity record not serializable: datasets \(Do not know how to serialize a BigInt\)/);
+});

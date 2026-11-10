@@ -61,6 +61,22 @@ test('workspace store: adoptStoredWorkspace accepts a valid state and migrates e
   assert.ok(store.get(entityKey('notes')), 'migration wrote the notes entity');
 });
 
+test('workspace store: a stored state predating datasets loads with an empty list and saves again', async () => {
+  // 2026-11-08: Robbie's lab refused every save with "Entity record not
+  // serializable: datasets" because his stored state predated saved
+  // datasets. validateState allows a missing list, so adopt must fill
+  // it before the state goes live, or nothing new ever saves.
+  const {ctx, store} = fakeCtx();
+  const older = ctx.getState();
+  delete older.datasets;
+  const s = createWorkspaceStore(ctx);
+  assert.equal(await s.adoptStoredWorkspace(older), true);
+  assert.deepEqual(ctx.getState().datasets, []);
+  assert.ok(store.get(entityKey('datasets')), 'migration wrote the datasets entity');
+  await s.saveNow();
+  assert.deepEqual(store.get('state.v1').datasets, []);
+});
+
 test('workspace store: writeStateChecked refuses when another tab moved the manifest', async () => {
   const {ctx, store} = fakeCtx();
   const s = createWorkspaceStore(ctx);
