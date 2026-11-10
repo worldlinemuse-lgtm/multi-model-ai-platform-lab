@@ -63,6 +63,7 @@ jobs:
           python -u tests/startup_integrity_browser.py --base-url http://127.0.0.1:8000
           python -u tests/sw_nonblocking_boot_browser.py --base-url http://127.0.0.1:8000
           python -u tests/browser_regression.py --base-url http://127.0.0.1:8000
+          python -u tests/phone_viewport_browser.py --base-url http://127.0.0.1:8000
           python -u tests/full_site_browser.py --base-url http://127.0.0.1:8000
           python -u tests/groq_connection_browser.py --base-url http://127.0.0.1:8000
           python -u tests/offline_acceptance.py --base-url http://127.0.0.1:8000
