@@ -78,3 +78,4 @@
 #brush-cursor .brush-ring.soft::after{content:'';position:absolute;inset:18%;border:1px dashed rgba(255,255,255,.45);border-radius:50%}
 .prompt-chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:18px}.prompt-chip{background:#1a2946;border:1px solid #354662;color:#dbe8fa;border-radius:20px;padding:9px 16px;font-size:12px;cursor:pointer;min-height:44px}.prompt-chip:hover{border-color:var(--accent);color:#fff}
 .chat-date-group{font-size:10px;font-weight:800;letter-spacing:1.2px;color:#71829f;padding:14px 10px 4px}
+.chat-to-top{position:absolute;right:14px;bottom:118px;z-index:5;border:1px solid var(--line);border-radius:20px;background:#1a2946ee;color:var(--text);padding:8px 14px;font-size:12px;font-weight:700;box-shadow:0 6px 20px #0007;backdrop-filter:blur(6px);transition:opacity .15s}.chat-to-top[hidden]{display:none}.chat-to-top:active{transform:scale(.96)}
