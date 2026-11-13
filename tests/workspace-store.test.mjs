@@ -140,3 +140,21 @@ test('workspace store: audit records the event, caps at 500, renders, and saves'
   assert.ok(store.get('state.v1'), 'debounced save wrote state.v1');
   assert.equal(store.get('state.v1').audit[0].usage.total_tokens, 3);
 });
+
+test('workspace store: replaceWorkspace restores a backup predating saved datasets', async () => {
+  // 2026-11-11 follow-up, not fixed by a6a061e: that fix normalized the
+  // missing list on load (adoptStoredWorkspace), but a pre-datasets backup
+  // restored through importAll -> replaceWorkspace still threw
+  // "Entity record not serializable: datasets" — validateState allows a
+  // missing list, splitState cannot save one. Restore must fill it.
+  const {ctx, store, getState} = fakeCtx();
+  const s = createWorkspaceStore(ctx);
+  await s.adoptStoredWorkspace(ctx.getState());
+  const older = freshState();
+  delete older.datasets;
+  await s.replaceWorkspace(older);
+  assert.deepEqual(getState().datasets, []);
+  await s.saveNow();
+  assert.ok(store.get(entityKey('datasets')), 'restored state saved its datasets entity');
+  assert.deepEqual(store.get('state.v1').datasets, []);
+});

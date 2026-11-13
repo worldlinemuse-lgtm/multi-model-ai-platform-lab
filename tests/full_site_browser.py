@@ -495,6 +495,85 @@ def check_data_persistence_transforms(p):
     p.wait_for_function("() => document.querySelector('#data-saved').options.length === 1",timeout=12000)
     verify(p.locator('#data-saved option').count()==1,'P18 deleted saved dataset still listed')
 
+def check_old_state_restore(p):
+    # 2026-11-11 follow-up: a6a061e normalized a missing datasets list on
+    # load, but replaceWorkspace did not — a pre-datasets backup restored
+    # through Settings -> Restore threw "not serializable: datasets" and
+    # nothing was restored. (a) Restore a backup with the datasets key
+    # deleted and confirm the restored state saves datasets as [].
+    # (b) Load-path guard for a6a061e: seed state.v1 with datasets deleted,
+    # reload, change a setting so a save runs, and confirm the saved
+    # state carries datasets as [].
+    p.wait_for_function("document.documentElement.dataset.mmBoot==='ready'",timeout=16000)
+    screen(p,'settings')
+    with p.expect_download() as saved:p.locator('#backup-all').click()
+    backup=json.loads(Path(saved.value.path()).read_text())
+    backup.pop('datasets',None)
+    approve(p)
+    p.locator('#restore-all').set_input_files({'name':'pre-datasets-backup.json','mimeType':'application/json','buffer':json.dumps(backup).encode()})
+    p.wait_for_function("document.querySelector('#toast').textContent.includes('Workspace restored and saved.')",timeout=10000)
+    restored=p.evaluate("""async () => {
+        const db = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return state.datasets;
+    }""")
+    verify(restored == [], 'Restored pre-datasets backup did not carry datasets as []: ' + str(restored))
+    seeded=p.evaluate("""async () => {
+        const open = () => new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const db = await open();
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        delete state.datasets;
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readwrite');
+            tx.objectStore('kv').put(state, 'state.v1');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+        return true;
+    }""")
+    verify(seeded, 'Seeding the datasets-less state in IndexedDB failed')
+    p.reload(timeout=25000)
+    p.wait_for_function("document.documentElement.dataset.mmBoot==='ready'",timeout=16000)
+    screen(p,'settings')
+    p.locator('#accent-select').select_option('violet')
+    p.wait_for_function("document.querySelector('#save-indicator').textContent === 'Saved on this device'",timeout=10000)
+    loaded=p.evaluate("""async () => {
+        const db = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('mm-studio-lab-b03', 1);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        const state = await new Promise((resolve, reject) => {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').get('state.v1');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return state.datasets;
+    }""")
+    verify(loaded == [], 'Loaded pre-datasets state did not save datasets as []: ' + str(loaded))
+
 def check_health_and_data_pages(p):
     screen(p,'overview')
     health=p.locator('#health-list')
@@ -1397,6 +1476,7 @@ CASES=[
  ('P16 cross-project knowledge search and live context',check_cross_project_knowledge),
  ('Data CSV/JSON/WASM/chart/error and export',check_data),
  ('P18/P19 named datasets, transformations, undo and backup roundtrip',check_data_persistence_transforms),
+ ('Pre-datasets backup restore and old-state load guard',check_old_state_restore),
  ('D09 dynamic health and P17 paginated data/chart coverage',check_health_and_data_pages),
  ('Canvas media adjustments, PNG and speech controls',check_media),
  ('Preferences, backup, restore rejection, persisted settings and reset',check_settings),
