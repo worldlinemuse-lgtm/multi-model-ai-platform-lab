@@ -131,7 +131,10 @@ export function previewReport(files,htmlName,binaryAssets={}){
     else next=setAttribute(next,'poster',resolved.dataUri);
    }
   }
-  return '<'+tag+next+'>';
+  // Rebuild the tag with a separating space: removeAttribute trims the
+  // attribute string, so concatenating it bare fuses the tag name with
+  // the next attribute (<imgalt="gone">) and the element never attaches.
+  return '<'+tag+(next?' '+next:'')+'>';
  });
  const csp='<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; media-src data: blob:; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\';">';
  const document='<!doctype html><html><head><meta charset="utf-8">'+csp+'</head><body>'+html+'</body></html>';

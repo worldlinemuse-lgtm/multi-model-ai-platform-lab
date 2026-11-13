@@ -68,8 +68,21 @@ test('Stage A: missing image warns by name and leaves no broken reference',()=>{
  assert.equal(out.warnings.length,1);
  assert.match(out.warnings[0],/gone\.png/);
  assert.ok(!out.document.includes('gone.png'),'missing ref must not survive in the document');
- assert.match(out.document,/<img[^>]*alt="gone"/);
+ // Exact tag match, space included: the old loose /<img[^>]*alt=.../ also
+ // matched the fused <imgalt="gone"> a stripped src used to emit, so
+ // this case stayed green while the stage had no img element at all.
+ assert.match(out.document,/<img alt="gone">/);
  assert.ok(!out.document.includes('src='),'stripped img must carry no src at all');
+ assert.ok(!out.document.includes('imgalt'),'stripped tag must not fuse with its attributes');
+});
+test('Stage A: missing video poster is stripped and the video tag stays intact',()=>{
+ const files={'index.html':'<video poster="gone.png" controls></video><img src="gone.png">'};
+ const out=previewReport(files,'index.html',{});
+ assert.equal(out.warnings.length,2);
+ assert.match(out.document,/<video controls><\/video>/);
+ assert.match(out.document,/<img>/);
+ assert.ok(!out.document.includes('gone.png'));
+ assert.ok(!out.document.includes('videocontrols'),'stripped tag must not fuse with its attributes');
 });
 test('Stage A: audio, video poster and source elements rewrite from binary assets',()=>{
  const files={'index.html':'<audio src="sfx.wav" controls></audio><video poster="icon.png"><source src="song.mp3"></video>'};

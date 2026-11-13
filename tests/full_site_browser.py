@@ -203,21 +203,9 @@ def check_stage_preview_assets(p):
     frame=p.frame_locator('#preview-host iframe')
     expect(frame.locator('#draw-marker')).to_have_text('DRAWN',timeout=15000)
     verify(p.locator('#preview-pane').is_visible(),'Stage did not show after ZIP import')
-    # One body-level read for every in-frame assertion: per-element
-    # evaluate() waits up to 30s for its element to attach, so a missing
-    # element used to fail as an opaque evaluate timeout instead of
-    # naming what was absent. querySelector returns null here instead.
-    state=frame.locator('body').evaluate("""(body)=>{
-        const img=document.querySelector('#sim-img');
-        const canvas=document.querySelector('#sim-canvas');
-        const marker=document.querySelector('#draw-marker');
-        return {imgWidth:img?img.naturalWidth:-1,
-            pixel:canvas?canvas.getContext('2d').getImageData(0,0,1,1).data[0]:-1,
-            color:marker?getComputedStyle(marker).color:''};
-    }""")
-    verify(state['imgWidth']>0,'Stage image did not load (naturalWidth %s)'%state['imgWidth'])
-    verify(state['pixel']>150,'Stage canvas did not draw (pixel %s)'%state['pixel'])
-    verify(state['color']=='rgb(7, 8, 9)','Stage CSS was not applied (%s)'%state['color'])
+    verify(frame.locator('#sim-img').evaluate('(node)=>node.naturalWidth')>0,'Stage image did not load (naturalWidth 0)')
+    verify(frame.locator('#sim-canvas').evaluate('(node)=>node.getContext("2d").getImageData(0,0,1,1).data[0]')>150,'Stage canvas did not draw')
+    verify(frame.locator('#draw-marker').evaluate('(node)=>getComputedStyle(node).color')=='rgb(7, 8, 9)','Stage CSS was not applied')
     verify(p.locator('#preview-warnings').is_hidden(),'Stage warnings shown for a complete project')
     # A missing picture warns by name in the stage list and leaves no broken ref.
     p.locator('#file-tree .file-entry[title="index.html"]').click()
@@ -226,23 +214,8 @@ def check_stage_preview_assets(p):
     p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.png')",timeout=10000)
     verify('gone.png' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing picture')
     verify('could not be shown' in p.locator('#toast').inner_text(),'Stage missing-file toast missing')
-    # The warnings list updates synchronously in previewPage right after
-    # the new iframe is inserted. The frame locator kept resolving to
-    # the detached first iframe (its srcdoc is correct in the DOM —
-    # verified by a CI diagnostic run), so read the stage through the
-    # live iframe element's own content frame instead.
-    # Locator.content_frame returns a FrameLocator (same selector-based
-    # resolution that kept finding the detached first frame). The live
-    # Frame comes from the element handle.
-    handle=p.locator('#preview-host iframe').element_handle()
-    real_frame=handle.content_frame() if handle else None
-    print('STAGE FRAME URL:',real_frame.url if real_frame else None,flush=True)
-    try:
-        print('STAGE FRAME HTML:',real_frame.evaluate("()=>document.documentElement.outerHTML.slice(0,500)") if real_frame else None,flush=True)
-    except Exception as e:
-        print('STAGE FRAME HTML ERROR:',repr(e)[:300],flush=True)
-    expect(real_frame.locator('img[alt="gone"]')).to_be_attached(timeout=10000)
-    verify(real_frame.locator('img[alt="gone"]').evaluate('(node)=>node.hasAttribute("src")')==False,'Missing image kept a broken src')
+    expect(frame.locator('img[alt="gone"]')).to_be_attached(timeout=10000)
+    verify(frame.locator('img[alt="gone"]').evaluate('(node)=>node.hasAttribute("src")')==False,'Missing image kept a broken src')
 def check_github_repo_import(p):
     screen(p,'workspace')
     png=make_png(4,2)
