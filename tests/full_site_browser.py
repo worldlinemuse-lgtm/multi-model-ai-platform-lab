@@ -275,6 +275,29 @@ def check_stage_module_preview(p):
     p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.js')",timeout=10000)
     verify('gone.js' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing module')
     verify(frame.locator('script[data-local-module]').count()==0,'Unlinked module bootstrap survived a failed graph')
+def check_stage_inline_module_preview(p):
+    screen(p,'workspace')
+    buf=io.BytesIO()
+    with zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as z:
+        z.writestr('index.html','<canvas id="sim-canvas" width="20" height="20"></canvas><div id="draw-marker">Waiting</div><script type="module">import {draw} from \'./helper.js\';\ndraw();\ndocument.querySelector("#draw-marker").textContent="INLINE_DRAWN";</script>')
+        z.writestr('helper.js',"export function draw(){const c=document.querySelector('#sim-canvas');c.getContext('2d').fillStyle='rgb(30,200,30)';c.getContext('2d').fillRect(0,0,20,20);}")
+    approve(p)
+    p.locator('#import-project').set_input_files({'name':'inline-module-project.zip','mimeType':'application/zip','buffer':buf.getvalue()})
+    # Import switches to the workspace, shows the stage and plays it; the
+    # inline module entry must compile through the validated graph and link
+    # to blob URLs, not preview with its code missing.
+    frame=p.frame_locator('#preview-host iframe')
+    expect(frame.locator('#draw-marker')).to_have_text('INLINE_DRAWN',timeout=15000)
+    verify(frame.locator('script[data-local-module]').count()==1,'Stage inline module entry was not linked as a blob bootstrap')
+    verify(frame.locator('#sim-canvas').evaluate('(node)=>node.getContext("2d").getImageData(0,0,1,1).data[1]')>150,'Stage inline module canvas did not draw')
+    verify(p.locator('#preview-warnings').is_hidden(),'Stage warnings shown for a complete inline module project')
+    # An inline module that imports a missing file warns by name and runs nothing.
+    p.locator('#file-tree .file-entry[title="index.html"]').click()
+    p.locator('#code-editor').fill('<canvas id="sim-canvas" width="20" height="20"></canvas><div id="draw-marker">Waiting</div><script type="module">import \'./gone.js\';\ndocument.querySelector("#draw-marker").textContent="SHOULD_NOT_RUN";</script>')
+    p.locator('#preview-page').click()
+    p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.js')",timeout=10000)
+    verify('gone.js' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing inline module')
+    verify(frame.locator('script[data-local-module]').count()==0,'Unlinked inline module bootstrap survived a failed graph')
 def check_providers(p):
     screen(p,'providers')
     verify(p.locator('.provider-card').count()==8,'Not eight provider cards')
@@ -1541,6 +1564,7 @@ CASES=[
  ('Stage A: ZIP import plays a sim-like project with canvas, CSS and image',check_stage_preview_assets),
  ('Stage A: GitHub repo link opens the project and plays it',check_github_repo_import),
  ('Stage B: module project imports and draws in the stage',check_stage_module_preview),
+ ('Stage C: inline module imports and draws in the stage',check_stage_inline_module_preview),
  ('Eight provider directory records and setup navigation',check_providers),
  ('Q26 validated local provider presets without network calls',check_q26_provider_model_presets),
  ('Vault locked typing, encryption, persistence, wrong password, removal and wipe',check_vault),

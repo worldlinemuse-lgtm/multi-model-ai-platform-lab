@@ -189,3 +189,83 @@ test('Stage B: preview CSP allows blob: module loads and still blocks network',(
  assert.match(html,/connect-src 'none'/);
  assert.match(html,/data-local-module="app.js"/);
 });
+
+// Stage C: inline <script type="module"> (no src) compiles as a synthetic
+// entry through the same validated graph and links to blob URLs, so relative
+// imports inside it run instead of throwing in the srcdoc preview.
+test('Stage C: inline module with a relative import links to a blob bootstrap, no warning',()=>{
+ const files={
+  'index.html':'<div id="m">Waiting</div><script type="module">import {msg} from \'./helper.js\';\ndocument.querySelector(\'#m\').textContent=msg;</script>',
+  'helper.js':"export const msg='MODULE_OK';"
+ };
+ const out=previewReport(files,'index.html');
+ assert.deepEqual(out.warnings,[]);
+ assert.match(out.document,/data-local-module="__inline-module-0\.js"/);
+ assert.match(out.document,/createObjectURL/);
+ assert.match(out.document,/linkModuleGraph/);
+ assert.match(out.document,/MODULE_OK/,'inline module source rides in the linked graph');
+ assert.ok(!out.document.includes('<script type="module"'),'inline entry tag must be replaced by the bootstrap, not left to 404');
+ for(const block of out.document.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
+  assert.doesNotThrow(()=>new vm.Script(block[1]),'bootstrap must be valid JS');
+ }
+});
+test('Stage C: inline module importing a missing file warns by name and drops the tag',()=>{
+ const files={
+  'index.html':'<div id="m">Waiting</div><script type="module">import \'./gone.js\';\ndocument.querySelector(\'#m\').textContent=\'RAN\';</script>'
+ };
+ const out=previewReport(files,'index.html');
+ assert.equal(out.warnings.length,1);
+ assert.match(out.warnings[0],/index\.html inline module/,'entry name in warnings is the page file');
+ assert.match(out.warnings[0],/gone\.js/);
+ assert.ok(!out.document.includes('data-local-module'));
+ assert.ok(!out.document.includes('RAN'),'unlinked inline module source must not survive in the document');
+});
+test('Stage C: a closing script tag inside inline module source cannot break out',()=>{
+ const files={
+  'index.html':'<script type="module">export const s=\'</script><script>alert(1)</script>\';</script>'
+ };
+ const out=previewReport(files,'index.html');
+ assert.deepEqual(out.warnings,[]);
+ assert.equal((out.document.match(/<\/script>/g)||[]).length,1,'inline source must not leak a closing tag');
+ assert.ok(!out.document.includes('<script>alert'),'injected script tag must not survive as markup');
+ assert.match(out.document,/data-local-module="__inline-module-0\.js"/);
+});
+test('Stage C: inline module in a nested page resolves relative imports from the page directory',()=>{
+ const files={
+  'web/index.html':'<script type="module">import {msg} from \'./helper.js\';\ndocument.querySelector(\'#m\').textContent=msg;</script><div id="m">Waiting</div>',
+  'web/helper.js':"export const msg='WEB_OK';",
+  'helper.js':"export const msg='WRONG';"
+ };
+ const out=previewReport(files,'web/index.html');
+ assert.deepEqual(out.warnings,[]);
+ assert.match(out.document,/data-local-module="web\/__inline-module-0\.js"/);
+ assert.match(out.document,/WEB_OK/,'import resolved from the page directory');
+ assert.ok(!out.document.includes('WRONG'),'root helper must not shadow the page-local one');
+});
+test('Stage C: classic inline scripts stay as-is and each inline module links separately',()=>{
+ const files={
+  'index.html':'<script>console.log("CLASSIC");</script><script type="module">import {a} from \'./a.js\';\nwindow.A=a;</script><script type="module">import {b} from \'./b.js\';\nwindow.B=b;</script>',
+  'a.js':"export const a='A_OK';",
+  'b.js':"export const b='B_OK';"
+ };
+ const out=previewReport(files,'index.html');
+ assert.deepEqual(out.warnings,[]);
+ assert.match(out.document,/console\.log\("CLASSIC"\)/,'classic inline script must survive untouched');
+ assert.equal((out.document.match(/data-local-module=/g)||[]).length,2,'each inline module gets its own bootstrap');
+ assert.match(out.document,/data-local-module="__inline-module-0\.js"/);
+ assert.match(out.document,/data-local-module="__inline-module-1\.js"/);
+ assert.match(out.document,/A_OK/);
+ assert.match(out.document,/B_OK/);
+});
+test('Stage C: dynamic import() inside an inline module warns by name and drops the tag',()=>{
+ const files={
+  'index.html':'<script type="module">const m=await import(\'./helper.js\');\ndocument.querySelector(\'#m\').textContent=\'RAN\';</script><div id="m">Waiting</div>',
+  'helper.js':"export const x=1;"
+ };
+ const out=previewReport(files,'index.html');
+ assert.equal(out.warnings.length,1);
+ assert.match(out.warnings[0],/index\.html inline module/);
+ assert.match(out.warnings[0],/Dynamic import\(\) is not supported/);
+ assert.ok(!out.document.includes('data-local-module'));
+ assert.ok(!out.document.includes('RAN'));
+});

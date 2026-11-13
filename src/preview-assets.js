@@ -107,6 +107,102 @@ function assetPath(files,page,ref){
  if(typeof files[path]!=='string')return {error:'non-text virtual asset unsupported'};
  return {path,content:files[path]};
 }
+// Find the '<' of the </script> closing an inline module, skipping the
+// sequence inside JS strings, template literals and comments. A raw
+// </script> can never sit inside a regex literal (its / would end it),
+// so code mode only needs quotes, backticks and comments; ${} nesting is
+// tracked so a string inside a template expression cannot end the tag.
+function findInlineScriptClose(html,start){
+ const stack=[];
+ let i=start;
+ while(i<html.length){
+  const frame=stack.length?stack[stack.length-1]:null;
+  const ch=html[i],next=html[i+1];
+  if(frame&&(frame.t==='sq'||frame.t==='dq')){
+   if(ch==='\\'){i+=2;continue;}
+   if(ch===frame.q)stack.pop();
+   i++;continue;
+  }
+  if(frame&&frame.t==='tpl'){
+   if(ch==='\\'){i+=2;continue;}
+   if(ch==='`'){stack.pop();i++;continue;}
+   if(ch==='$'&&next==='{'){stack.push({t:'expr',depth:1});i+=2;continue;}
+   i++;continue;
+  }
+  if(frame&&frame.t==='line'){
+   if(ch==='\n')stack.pop();
+   i++;continue;
+  }
+  if(frame&&frame.t==='block'){
+   if(ch==='*'&&next==='/'){stack.pop();i+=2;continue;}
+   i++;continue;
+  }
+  if(ch==='\''){stack.push({t:'sq',q:'\''});i++;continue;}
+  if(ch==='"'){stack.push({t:'dq',q:'"'});i++;continue;}
+  if(ch==='`'){stack.push({t:'tpl'});i++;continue;}
+  if(ch==='/'&&next==='/'){stack.push({t:'line'});i+=2;continue;}
+  if(ch==='/'&&next==='*'){stack.push({t:'block'});i+=2;continue;}
+  if(frame&&frame.t==='expr'){
+   if(ch==='{'){frame.depth++;i++;continue;}
+   if(ch==='}'){frame.depth--;if(!frame.depth)stack.pop();i++;continue;}
+  }
+  if(ch==='<'){
+   const rest=html.slice(i+1,i+8).toLowerCase();
+   if(rest.startsWith('/script')){
+    const after=html[i+8];
+    if(after===undefined||/[\s/>]/.test(after))return i;
+   }
+  }
+  i++;
+ }
+ return -1;
+}
+// An inline module compiles as a synthetic entry in the page's own
+// directory, so its relative imports resolve exactly as they would from
+// the page itself. The synthetic name never leaks into warnings: graph
+// errors name the page file (e.g. "index.html inline module").
+function inlineModuleGraph(files,htmlName,body,index,used){
+ const modules=jsModuleFiles(files);
+ const dir=htmlName.split('/').slice(0,-1);
+ let name,n=index;
+ do{name=[...dir,'__inline-module-'+(n++)+'.js'].join('/');}while(owns(modules,name)||used.has(name));
+ used.add(name);
+ try{return compileModuleGraph({...modules,[name]:body},name);}
+ catch(error){
+  const display=htmlName+' inline module';
+  throw Error(String(error?.message||error).split(name).join(display));
+ }
+}
+// Inline <script type="module"> (no src) compiles through the same
+// validated graph as src modules and links to the same blob bootstrap.
+// The body is found with the JS-aware scan above, so a </script> inside
+// a string or comment cannot end the tag early and leak source as markup.
+// Graph failures warn by name and drop the tag — never network-loaded.
+function replaceInlineModules(html,files,htmlName,report){
+ let out='',cursor=0,index=0;
+ const used=new Set();
+ const open=/<script\b([^>]*)>/gi;
+ let match;
+ while((match=open.exec(html))!==null){
+  const attrs=match[1],type=attribute(attrs,'type');
+  if(!type||type.toLowerCase().trim()!=='module')continue;
+  if(attribute(attrs,'src')!==null)continue;
+  const bodyStart=match.index+match[0].length;
+  const close=findInlineScriptClose(html,bodyStart);
+  if(close<0)continue;
+  const closeEnd=html.indexOf('>',close);
+  if(closeEnd<0)continue;
+  const body=html.slice(bodyStart,close);
+  let replacement;
+  try{replacement=moduleBootstrap(inlineModuleGraph(files,htmlName,body,index,used));}
+  catch(error){replacement=report('JS',htmlName+' inline module',error?.message||String(error));}
+  out+=html.slice(cursor,match.index)+replacement;
+  cursor=closeEnd+1;
+  index++;
+  open.lastIndex=cursor;
+ }
+ return out+html.slice(cursor);
+}
 export function previewReport(files,htmlName,binaryAssets={}){
  if(!files||!owns(files,htmlName)||typeof files[htmlName]!=='string')throw Error('Select an existing HTML file to preview.');
  const warnings=[];
@@ -122,6 +218,10 @@ export function previewReport(files,htmlName,binaryAssets={}){
   const css=rewriteCssUrls(asset.content,htmlName,files,binaryAssets,report);
   return '<style data-local-href="'+htmlAttr(asset.path)+'">'+safeTagText(css,'style')+'</style>';
  });
+ // Inline modules compile first, with a JS-aware scan for their closing
+ // tag; the general pass below then handles src scripts and classic
+ // inline scripts exactly as before.
+ html=replaceInlineModules(html,files,htmlName,report);
  // Inserting at each original script location preserves ordering with inline scripts.
  // Module entries are linked to blob URLs and run; anything the graph
  // rejects (missing dep, dynamic import, traversal, external) is warned
