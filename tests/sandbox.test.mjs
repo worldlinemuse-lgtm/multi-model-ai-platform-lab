@@ -26,20 +26,21 @@ test('P04: linked virtual assets resolve relative to selected nested HTML; unuse
  assert.ok(!rendered.document.includes('unrelated JS must never run'));
  assert.ok(!rendered.document.includes('color: orange'));
 });
-test('P04: block external URLs, traversal, missing and unsupported module scripts',()=>{
+test('P04: block external URLs, traversal and missing assets; module scripts now link instead of being skipped',()=>{
  const files={'web/index.html':'<script src="https://example.org/attack.js"></script><script src="../../escape.js"></script><link rel="stylesheet" href="missing.css"><script type="module" src="./mod.js"></script><script src="./good.js"></script>',
   'web/good.js':'console.log("GOOD")','web/mod.js':'export const n=42;',
   'escape.js':'console.log("ESCAPED")'};
  const out=previewReport(files,'web/index.html');
- assert.equal(out.warnings.length,4);
+ assert.equal(out.warnings.length,3);
  assert.match(out.document,/GOOD/);
  assert.ok(!out.document.includes('ESCAPED'));
  assert.ok(!out.document.includes('attack.js"'));
- assert.ok(!out.document.includes('export const n'));
+ assert.match(out.document,/data-local-module="web\/mod.js"/,'module entry must link to a blob bootstrap, not be skipped');
+ assert.match(out.document,/export const n/,'module source rides in the linked graph');
  assert.match(out.warnings.join(' | '),/external reference blocked/);
  assert.match(out.warnings.join(' | '),/outside project root/);
  assert.match(out.warnings.join(' | '),/local asset not found/);
- assert.match(out.warnings.join(' | '),/module imports are not supported/);
+ assert.ok(!out.warnings.join(' | ').includes('module imports are not supported'),'Stage B: modules are supported now');
 });
 test('P04: escape closing tags inside local scripts and CSS',()=>{
  const files={
@@ -125,4 +126,66 @@ test('Stage A: preview CSP allows data: media so rewritten audio/video can actua
  assert.match(html,/media-src data: blob:/);
  assert.match(html,/img-src data: blob:/);
  assert.match(html,/connect-src 'none'/);
+});
+
+// Stage B: ES modules in preview — module scripts link to blob URLs and run
+// instead of previewing with their code missing.
+test('Stage B: module entry with a relative import links to a blob bootstrap, no warning',()=>{
+ const files={
+  'index.html':'<div id="m">Waiting</div><script type="module" src="app.js"></script>',
+  'app.js':"import {msg} from './helper.js';\ndocument.querySelector('#m').textContent=msg;",
+  'helper.js':"export const msg='MODULE_OK';"
+ };
+ const out=previewReport(files,'index.html');
+ assert.deepEqual(out.warnings,[]);
+ assert.ok(!out.document.includes('module imports are not supported'));
+ assert.match(out.document,/script-src 'unsafe-inline' blob:/);
+ assert.match(out.document,/data-local-module="app.js"/);
+ assert.match(out.document,/createObjectURL/);
+ assert.match(out.document,/linkModuleGraph/);
+ assert.match(out.document,/MODULE_OK/,'module source rides in the linked graph');
+ assert.ok(!out.document.includes('<script type="module"'),'entry tag must be replaced by the bootstrap, not left to 404');
+ // Every script block in the emitted document must parse as JavaScript.
+ for(const block of out.document.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
+  assert.doesNotThrow(()=>new vm.Script(block[1]),'bootstrap must be valid JS');
+ }
+});
+test('Stage B: missing module dependency warns by name and strips the module tag',()=>{
+ const files={
+  'index.html':'<script type="module" src="app.js"></script><div id="m">Waiting</div>',
+  'app.js':"import './gone.js';\ndocument.querySelector('#m').textContent='RAN';"
+ };
+ const out=previewReport(files,'index.html');
+ assert.equal(out.warnings.length,1);
+ assert.match(out.warnings[0],/gone\.js/);
+ assert.ok(!out.document.includes('data-local-module'));
+ assert.ok(!out.document.includes('RAN'),'unlinked module source must not survive in the document');
+});
+test('Stage B: external module src is blocked and warned; dynamic import() is refused with a warning',()=>{
+ const files={
+  'index.html':'<script type="module" src="https://evil.example/x.js"></script><script type="module" src="dyn.js"></script>',
+  'dyn.js':"const m=await import('./helper.js');",
+  'helper.js':"export const x=1;"
+ };
+ const out=previewReport(files,'index.html');
+ assert.equal(out.warnings.length,2);
+ assert.match(out.warnings.join(' | '),/external reference blocked/);
+ assert.match(out.warnings.join(' | '),/Dynamic import\(\) is not supported/);
+ assert.ok(!out.document.includes('data-local-module'));
+ assert.ok(!out.document.includes('evil.example'));
+});
+test('Stage B: module source containing a closing script tag cannot break out of the bootstrap',()=>{
+ const files={
+  'index.html':'<script type="module" src="app.js"></script>',
+  'app.js':"export const s='</script><script>alert(1)</script>';"
+ };
+ const out=previewReport(files,'index.html');
+ assert.deepEqual(out.warnings,[]);
+ assert.equal((out.document.match(/<\/script>/g)||[]).length,1,'bootstrap must not leak a closing tag');
+});
+test('Stage B: preview CSP allows blob: module loads and still blocks network',()=>{
+ const html=previewDocument({'index.html':'<script type="module" src="app.js"></script>','app.js':"export const x=1;"},'index.html');
+ assert.match(html,/script-src 'unsafe-inline' blob:/);
+ assert.match(html,/connect-src 'none'/);
+ assert.match(html,/data-local-module="app.js"/);
 });

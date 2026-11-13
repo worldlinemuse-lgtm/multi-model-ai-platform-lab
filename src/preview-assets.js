@@ -1,7 +1,11 @@
 /* Browser-local preview asset resolution. This is not a bundler or network loader.
  * Only referenced virtual project CSS and classic JS are inlined, in page order.
+ * Module scripts are linked to blob URLs at runtime inside the preview
+ * (same validated graph + linker as the module runner), never network-loaded.
  * The caller must place the result in an opaque-origin sandbox with allow-scripts only.
  */
+import {compileModuleGraph} from './module-graph.js';
+import {linkerWorkerSource} from './module-linker.js';
 const owns=(obj,key)=>Object.prototype.hasOwnProperty.call(obj,key);
 const safeTagText=(input,closing)=>String(input).replace(new RegExp('</'+closing,'gi'),'<\\/'+closing);
 const htmlAttr=(value)=>String(value).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
@@ -76,6 +80,25 @@ function rewriteCssUrls(css,page,files,binaryAssets,report){
   return 'url("'+resolved.dataUri+'")';
  });
 }
+// Only text .js/.mjs files can take part in a module graph; HTML, CSS and
+// binary assets are not modules and must not trip the graph's file limits.
+function jsModuleFiles(files){
+ const out={};
+ for(const [name,content] of Object.entries(files)){
+  if(typeof content==='string'&&/\.(?:js|mjs)$/.test(name))out[name]=content;
+ }
+ return out;
+}
+// A module entry becomes a small inline bootstrap: it carries the validated
+// graph and the tested linker, creates blob URLs for the linked modules
+// inside the preview iframe, and dynamically imports the entry. Blob URLs
+// are revoked once the entry has loaded; the module code stays in memory.
+// The graph JSON is <>&-escaped so module source can never close the tag.
+function moduleBootstrap(graph){
+ const graphJson=JSON.stringify(graph).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026');
+ const code='(()=>{'+linkerWorkerSource()+'const graph='+graphJson+';let linked;try{linked=linkModuleGraph(graph,function(source){return URL.createObjectURL(new Blob([source],{type:"text/javascript"}));});import(linked.entryUrl).then(function(){linked.revoke();},function(error){console.error(error);linked.revoke();});}catch(error){console.error(error);}})();';
+ return '<script data-local-module="'+htmlAttr(graph.entry)+'">'+safeTagText(code,'script')+'</script>';
+}
 function assetPath(files,page,ref){
  const resolved=resolveLocalPath(page,ref);
  if(resolved.error)return resolved;
@@ -100,12 +123,21 @@ export function previewReport(files,htmlName,binaryAssets={}){
   return '<style data-local-href="'+htmlAttr(asset.path)+'">'+safeTagText(css,'style')+'</style>';
  });
  // Inserting at each original script location preserves ordering with inline scripts.
- // Explicitly skip external, missing and module scripts; never network-load them.
+ // Module entries are linked to blob URLs and run; anything the graph
+ // rejects (missing dep, dynamic import, traversal, external) is warned
+ // by name and the tag is dropped — never network-loaded.
  html=html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,(whole,attrs,body)=>{
   const ref=attribute(attrs,'src');
   if(ref===null)return whole;
   const type=attribute(attrs,'type');
-  if(type&&type.toLowerCase().trim()==='module')return report('JS',ref,'module imports are not supported by this preview');
+  if(type&&type.toLowerCase().trim()==='module'){
+   const asset=assetPath(files,htmlName,ref);
+   if(asset.error)return report('JS',ref,asset.error);
+   let graph;
+   try{graph=compileModuleGraph(jsModuleFiles(files),asset.path);}
+   catch(error){return report('JS',ref,error?.message||String(error));}
+   return moduleBootstrap(graph);
+  }
   if(type&&!['text/javascript','application/javascript'].includes(type.toLowerCase().trim()))return report('JS',ref,'script type not supported');
   const asset=assetPath(files,htmlName,ref);
   if(asset.error)return report('JS',ref,asset.error);
@@ -136,7 +168,7 @@ export function previewReport(files,htmlName,binaryAssets={}){
   // the next attribute (<imgalt="gone">) and the element never attaches.
   return '<'+tag+(next?' '+next:'')+'>';
  });
- const csp='<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; media-src data: blob:; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\';">';
+ const csp='<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; media-src data: blob:; style-src \'unsafe-inline\'; script-src \'unsafe-inline\' blob:; connect-src \'none\'; form-action \'none\'; base-uri \'none\';">';
  const document='<!doctype html><html><head><meta charset="utf-8">'+csp+'</head><body>'+html+'</body></html>';
  return {document,warnings};
 }

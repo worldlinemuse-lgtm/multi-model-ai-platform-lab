@@ -251,6 +251,30 @@ def check_github_repo_import(p):
     verify('widgets' in p.locator('#stat-project').inner_text(),'GitHub import did not become the active project')
     verify(frame.locator('#sim-img').evaluate('(node)=>node.naturalWidth')>0,'GitHub-imported stage image did not load')
     verify(p.locator('#preview-pane').is_visible(),'GitHub import did not show the stage')
+def check_stage_module_preview(p):
+    screen(p,'workspace')
+    buf=io.BytesIO()
+    with zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as z:
+        z.writestr('index.html','<canvas id="sim-canvas" width="20" height="20"></canvas><div id="draw-marker">Waiting</div><script type="module" src="app.js"></script>')
+        z.writestr('app.js',"import {draw} from './helper.js';\ndraw();\ndocument.querySelector('#draw-marker').textContent='MODULE_DRAWN';")
+        z.writestr('helper.js',"export function draw(){const c=document.querySelector('#sim-canvas');c.getContext('2d').fillStyle='rgb(30,200,30)';c.getContext('2d').fillRect(0,0,20,20);}")
+    approve(p)
+    p.locator('#import-project').set_input_files({'name':'module-project.zip','mimeType':'application/zip','buffer':buf.getvalue()})
+    # Import switches to the workspace, shows the stage and plays it; the
+    # module entry must link to blob URLs and run, not preview with its
+    # code missing.
+    frame=p.frame_locator('#preview-host iframe')
+    expect(frame.locator('#draw-marker')).to_have_text('MODULE_DRAWN',timeout=15000)
+    verify(frame.locator('script[data-local-module]').count()==1,'Stage module entry was not linked as a blob bootstrap')
+    verify(frame.locator('#sim-canvas').evaluate('(node)=>node.getContext("2d").getImageData(0,0,1,1).data[1]')>150,'Stage module canvas did not draw')
+    verify(p.locator('#preview-warnings').is_hidden(),'Stage warnings shown for a complete module project')
+    # A module that imports a missing file warns by name and runs nothing.
+    p.locator('#file-tree .file-entry[title="app.js"]').click()
+    p.locator('#code-editor').fill("import './gone.js';\ndocument.querySelector('#draw-marker').textContent='SHOULD_NOT_RUN';")
+    p.locator('#preview-page').click()
+    p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.js')",timeout=10000)
+    verify('gone.js' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing module')
+    verify(frame.locator('script[data-local-module]').count()==0,'Unlinked module bootstrap survived a failed graph')
 def check_providers(p):
     screen(p,'providers')
     verify(p.locator('.provider-card').count()==8,'Not eight provider cards')
@@ -1516,6 +1540,7 @@ CASES=[
  ('P04 linked local CSS and classic scripts in original order',check_linked_preview),
  ('Stage A: ZIP import plays a sim-like project with canvas, CSS and image',check_stage_preview_assets),
  ('Stage A: GitHub repo link opens the project and plays it',check_github_repo_import),
+ ('Stage B: module project imports and draws in the stage',check_stage_module_preview),
  ('Eight provider directory records and setup navigation',check_providers),
  ('Q26 validated local provider presets without network calls',check_q26_provider_model_presets),
  ('Vault locked typing, encryption, persistence, wrong password, removal and wipe',check_vault),
