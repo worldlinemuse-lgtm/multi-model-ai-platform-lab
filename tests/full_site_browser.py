@@ -226,23 +226,14 @@ def check_stage_preview_assets(p):
     p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.png')",timeout=10000)
     verify('gone.png' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing picture')
     verify('could not be shown' in p.locator('#toast').inner_text(),'Stage missing-file toast missing')
-    diag=p.evaluate("""()=>{
-        const host=document.querySelector('#preview-host');
-        const frames=[...document.querySelectorAll('#preview-host iframe')];
-        return JSON.stringify({hostChildren:host?host.childNodes.length:-1,
-            frameCount:frames.length,
-            srcdocHasGoneAlt:frames.map(f=>(f.getAttribute('srcdoc')||'').includes('alt="gone"')),
-            srcdocLen:frames.map(f=>(f.getAttribute('srcdoc')||'').length),
-            warnings:document.querySelector('#preview-warnings')?.textContent});
-    }""")
-    print('STAGE DIAG:',diag,flush=True)
     # The warnings list updates synchronously in previewPage right after
-    # the new iframe is inserted, before its srcdoc document has parsed
-    # the <img> — so re-resolve the frame and wait for the image to
-    # attach before reading it, instead of racing the parse.
-    frame=p.frame_locator('#preview-host iframe')
-    expect(frame.locator('img[alt="gone"]')).to_be_attached(timeout=10000)
-    verify(frame.locator('img[alt="gone"]').evaluate('(node)=>node.hasAttribute("src")')==False,'Missing image kept a broken src')
+    # the new iframe is inserted. The frame locator kept resolving to
+    # the detached first iframe (its srcdoc is correct in the DOM —
+    # verified by a CI diagnostic run), so read the stage through the
+    # live iframe element's own content frame instead.
+    stage_frame=p.locator('#preview-host iframe').content_frame
+    expect(stage_frame.locator('img[alt="gone"]')).to_be_attached(timeout=10000)
+    verify(stage_frame.locator('img[alt="gone"]').evaluate('(node)=>node.hasAttribute("src")')==False,'Missing image kept a broken src')
 def check_github_repo_import(p):
     screen(p,'workspace')
     png=make_png(4,2)
