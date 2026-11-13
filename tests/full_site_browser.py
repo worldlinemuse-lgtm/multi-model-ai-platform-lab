@@ -226,12 +226,13 @@ def check_stage_preview_assets(p):
     p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.png')",timeout=10000)
     verify('gone.png' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing picture')
     verify('could not be shown' in p.locator('#toast').inner_text(),'Stage missing-file toast missing')
-    gone=frame.locator('body').evaluate("""(body)=>{
-        const img=document.querySelector('img[alt="gone"]');
-        return {present:!!img,hasSrc:img?img.hasAttribute('src'):null};
-    }""")
-    verify(gone['present'],'Missing image element is absent from the stage')
-    verify(gone['hasSrc']==False,'Missing image kept a broken src')
+    # The warnings list updates synchronously in previewPage right after
+    # the new iframe is inserted, before its srcdoc document has parsed
+    # the <img> — so re-resolve the frame and wait for the image to
+    # attach before reading it, instead of racing the parse.
+    frame=p.frame_locator('#preview-host iframe')
+    expect(frame.locator('img[alt="gone"]')).to_be_attached(timeout=10000)
+    verify(frame.locator('img[alt="gone"]').evaluate('(node)=>node.hasAttribute("src")')==False,'Missing image kept a broken src')
 def check_github_repo_import(p):
     screen(p,'workspace')
     png=make_png(4,2)
