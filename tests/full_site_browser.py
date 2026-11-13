@@ -226,6 +226,16 @@ def check_stage_preview_assets(p):
     p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.png')",timeout=10000)
     verify('gone.png' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing picture')
     verify('could not be shown' in p.locator('#toast').inner_text(),'Stage missing-file toast missing')
+    diag=p.evaluate("""()=>{
+        const host=document.querySelector('#preview-host');
+        const frames=[...document.querySelectorAll('#preview-host iframe')];
+        return JSON.stringify({hostChildren:host?host.childNodes.length:-1,
+            frameCount:frames.length,
+            srcdocHasGoneAlt:frames.map(f=>(f.getAttribute('srcdoc')||'').includes('alt="gone"')),
+            srcdocLen:frames.map(f=>(f.getAttribute('srcdoc')||'').length),
+            warnings:document.querySelector('#preview-warnings')?.textContent});
+    }""")
+    print('STAGE DIAG:',diag,flush=True)
     # The warnings list updates synchronously in previewPage right after
     # the new iframe is inserted, before its srcdoc document has parsed
     # the <img> — so re-resolve the frame and wait for the image to
