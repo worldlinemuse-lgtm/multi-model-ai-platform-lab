@@ -188,6 +188,68 @@ def check_linked_preview(p):
     color=linked.locator('#linked-result').evaluate('(node)=>getComputedStyle(node).color')
     verify(color=='rgb(7, 8, 9)','P04 CSS was not applied at declared reference')
     verify('external reference blocked' in p.locator('#toast').inner_text(),'P04 external script omission not explained')
+def check_stage_preview_assets(p):
+    screen(p,'workspace')
+    png=make_png(4,2)
+    buf=io.BytesIO()
+    with zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as z:
+        z.writestr('index.html','<link rel="stylesheet" href="style.css"><canvas id="sim-canvas" width="20" height="20"></canvas><img id="sim-img" src="icon.png" alt="icon"><div id="draw-marker">Waiting</div><script src="app.js"></script>')
+        z.writestr('app.js','const c=document.querySelector("#sim-canvas");c.getContext("2d").fillStyle="rgb(200,30,30)";c.getContext("2d").fillRect(0,0,20,20);document.querySelector("#draw-marker").textContent="DRAWN";')
+        z.writestr('style.css','#draw-marker{color:rgb(7,8,9)}')
+        z.writestr('icon.png',png)
+    approve(p)
+    p.locator('#import-project').set_input_files({'name':'sim-project.zip','mimeType':'application/zip','buffer':buf.getvalue()})
+    # Import switches to the workspace, shows the stage and plays it.
+    frame=p.frame_locator('#preview-host iframe')
+    expect(frame.locator('#draw-marker')).to_have_text('DRAWN',timeout=15000)
+    verify(p.locator('#preview-pane').is_visible(),'Stage did not show after ZIP import')
+    verify(frame.locator('#sim-img').evaluate('(node)=>node.naturalWidth')>0,'Stage image did not load (naturalWidth 0)')
+    verify(frame.locator('#sim-canvas').evaluate('(node)=>node.getContext("2d").getImageData(0,0,1,1).data[0]')>150,'Stage canvas did not draw')
+    verify(frame.locator('#draw-marker').evaluate('(node)=>getComputedStyle(node).color')=='rgb(7, 8, 9)','Stage CSS was not applied')
+    verify(p.locator('#preview-warnings').is_hidden(),'Stage warnings shown for a complete project')
+    # A missing picture warns by name in the stage list and leaves no broken ref.
+    p.locator('#file-tree .file-entry[title="index.html"]').click()
+    p.locator('#code-editor').fill('<img src="gone.png" alt="gone"><div id="draw-marker">Waiting</div>')
+    p.locator('#preview-page').click()
+    p.wait_for_function("document.querySelector('#preview-warnings').textContent.includes('gone.png')",timeout=10000)
+    verify('gone.png' in p.locator('#preview-warnings').inner_text(),'Stage did not name the missing picture')
+    verify('could not be shown' in p.locator('#toast').inner_text(),'Stage missing-file toast missing')
+    verify(frame.locator('img[alt="gone"]').evaluate('(node)=>node.hasAttribute("src")')==False,'Missing image kept a broken src')
+def check_github_repo_import(p):
+    screen(p,'workspace')
+    png=make_png(4,2)
+    def api(route):
+        url=route.request.url
+        if url=='https://api.github.com/repos/acme/widgets':
+            route.fulfill(status=200,content_type='application/json',body=json.dumps({'default_branch':'main'}))
+        elif url=='https://api.github.com/repos/acme/widgets/git/trees/main?recursive=1':
+            route.fulfill(status=200,content_type='application/json',body=json.dumps({'tree':[
+                {'path':'index.html','type':'blob','size':200,'sha':'a'},
+                {'path':'app.js','type':'blob','size':120,'sha':'b'},
+                {'path':'icon.png','type':'blob','size':len(png),'sha':'c'},
+                {'path':'.github/workflows/test.yml','type':'blob','size':10,'sha':'d'}]}))
+        else:
+            route.fulfill(status=404,content_type='application/json',body='{"message":"Not Found"}')
+    def raw(route):
+        url=route.request.url
+        if url.endswith('/index.html'):
+            route.fulfill(status=200,content_type='text/plain',body='<canvas id="sim-canvas" width="20" height="20"></canvas><img id="sim-img" src="icon.png" alt="icon"><div id="draw-marker">Waiting</div><script src="app.js"></script>')
+        elif url.endswith('/app.js'):
+            route.fulfill(status=200,content_type='text/plain',body='const c=document.querySelector("#sim-canvas");c.getContext("2d").fillStyle="rgb(200,30,30)";c.getContext("2d").fillRect(0,0,20,20);document.querySelector("#draw-marker").textContent="DRAWN";')
+        elif url.endswith('/icon.png'):
+            route.fulfill(status=200,content_type='image/png',body=png)
+        else:
+            route.fulfill(status=404,body='Not Found')
+    p.route('**/api.github.com/**',api)
+    p.route('**/raw.githubusercontent.com/**',raw)
+    p.locator('#github-repo-url').fill('https://github.com/acme/widgets')
+    approve(p)
+    p.locator('#github-repo-import').click()
+    frame=p.frame_locator('#preview-host iframe')
+    expect(frame.locator('#draw-marker')).to_have_text('DRAWN',timeout=15000)
+    verify('widgets' in p.locator('#stat-project').inner_text(),'GitHub import did not become the active project')
+    verify(frame.locator('#sim-img').evaluate('(node)=>node.naturalWidth')>0,'GitHub-imported stage image did not load')
+    verify(p.locator('#preview-pane').is_visible(),'GitHub import did not show the stage')
 def check_providers(p):
     screen(p,'providers')
     verify(p.locator('.provider-card').count()==8,'Not eight provider cards')
@@ -1451,6 +1513,8 @@ CASES=[
  ('P23 snapshot compare, pin, rename, export and safe deletion',check_snapshot_management),
  ('Isolated HTML preview tabs',check_html_preview),
  ('P04 linked local CSS and classic scripts in original order',check_linked_preview),
+ ('Stage A: ZIP import plays a sim-like project with canvas, CSS and image',check_stage_preview_assets),
+ ('Stage A: GitHub repo link opens the project and plays it',check_github_repo_import),
  ('Eight provider directory records and setup navigation',check_providers),
  ('Q26 validated local provider presets without network calls',check_q26_provider_model_presets),
  ('Vault locked typing, encryption, persistence, wrong password, removal and wipe',check_vault),

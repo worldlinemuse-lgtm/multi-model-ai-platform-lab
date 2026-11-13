@@ -8,6 +8,7 @@ import {MAX_FILES,MAX_PROJECT_BYTES,clone,uid,now,safeName,safeFiles,starterProj
 import {projectFolders,projectTreeEntries,moveProjectFolder,copyProjectFolder} from './project-files.js';
 import {zipFiles,unzipFiles} from './zip.js';
 import {binaryRecord,decodeBinaryRecord,validateBinaryAssets,exportBinaryBytes,BINARY_TYPES,MAX_BINARY_FILE_BYTES} from './binary-assets.js';
+import {stripTopLevelFolder,pickEntryFile,fetchGitHubRepo} from './github-import.js';
 import {prepareTextEdit,applyTextEdit,rollbackTextEdit} from './review-edits.js';
 import {compareProjectFiles} from './snapshot-diff.js';
 import {$,make,clearNode,formatTime,errorText} from './dom-helpers.js';
@@ -183,7 +184,11 @@ export function createProjects(ctx){
      if(value instanceof Uint8Array)binaryAssets[filename]=binaryRecord(filename,value);
      else files[filename]=value;
     }
-    active=Object.hasOwn(files,'main.js')?'main.js':Object.keys(files)[0];
+    // GitHub ZIPs wrap everything in one repo-branch/ folder; strip it so
+    // index.html lands at the root. Other layouts pass through unchanged.
+    const strippedFiles=stripTopLevelFolder(files),strippedBinary=stripTopLevelFolder(binaryAssets);
+    files=strippedFiles;binaryAssets=strippedBinary;
+    active=pickEntryFile(files);
    }else{
     const payload=JSON.parse(await file.text());
     if(!payload||!['mm-platform-b01','mm-platform-binary-v1'].includes(payload.format)||!payload.files||!payload.active)throw Error('Not a supported project JSON format');
@@ -196,8 +201,26 @@ export function createProjects(ctx){
    state().projects.push(p);state().activeProjectId=p.id;
    try{await ctx.saveNow();}catch(error){state().projects.pop();state().activeProjectId=state().projects[0].id;throw error;}
    selectedBinaryName=null;renderFiles();ctx.metrics.finish(span,'ok');ctx.toast('Imported local project with validated media.');
+   ctx.onImported?.();
   }catch(error){ctx.metrics.finish(span,'error','invalid-input');ctx.toast('Import rejected: '+errorText(error),true);}
  }
+ async function importGitHubRepo(rawUrl){
+  const url=String(rawUrl||'').trim();
+  if(!url)return ctx.toast('Paste a GitHub repo link first, like https://github.com/owner/repo.',true);
+  const span=ctx.metrics.begin('project-import');
+  try{
+   const fetched=await fetchGitHubRepo(url,{fetchImpl:fetch});
+   if(state().projects.length>=30)throw Error('Project limit reached');
+   const skippedNote=fetched.skipped.length?` ${fetched.skipped.length} file(s) left out: `+fetched.skipped.map(s=>s.path+' ('+s.reason+')').join('; '):'';
+   if(!confirm('Open "'+fetched.name+'" from GitHub as a new project — '+Object.keys(fetched.files).length+' text and '+Object.keys(fetched.binaryAssets).length+' media files?'+skippedNote))return;
+   const p={id:uid('project'),name:fetched.name.slice(0,90),active:fetched.active,files:fetched.files,binaryAssets:fetched.binaryAssets,updated:now()};
+   state().projects.push(p);state().activeProjectId=p.id;
+   try{await ctx.saveNow();}catch(error){state().projects.pop();state().activeProjectId=state().projects[0].id;throw error;}
+   selectedBinaryName=null;renderFiles();ctx.metrics.finish(span,'ok');
+   ctx.toast('Opened "'+fetched.name+'" from GitHub.'+(fetched.skipped.length?' '+fetched.skipped.length+' file(s) were left out — see the stage warnings after it plays.':''));
+   ctx.onImported?.();
+  }catch(error){ctx.metrics.finish(span,'error','invalid-input');ctx.toast('GitHub import failed: '+errorText(error),true);}
+ }
  async function importTextFiles(input){const files=Array.from(input.files||[]);input.value='';if(!files.length)return;const span=ctx.metrics.begin('project-import');try{const p=project();let accepted=0;for(const file of files.slice(0,20)){const name=file.name;if(!safeName(name)||file.size>500000||Object.hasOwn(p.files,name)||Object.hasOwn(p.binaryAssets||{},name))continue;const text=await file.text();if(Object.keys(p.files).length>=MAX_FILES)break;p.files[name]=text;if(!safeFiles(p.files)){delete p.files[name];break;}p.active=name;accepted++;}renderFiles();ctx.saveSoon();ctx.metrics.finish(span,'ok');ctx.toast(`${accepted} text file(s) imported into current project.`);}catch(error){ctx.metrics.finish(span,'error','invalid-input');ctx.toast('Text import failed: '+errorText(error),true);}}
- return {project,renderProjectSelector,revokeBinaryAssetURL,renderBinaryAssets,importBinaryAssets,removeBinaryAsset,projectZip,renderFiles,renderGutter,editFile,q04SyncButtons,q04PreviewEdit,q04AcceptEdit,q04RollbackEdit,createProject,renameProject,deleteProject,newFile,renameFile,copyFolder,moveFolder,deleteFile,snapshot,selectedSnapshot,renderSnapshotActions,manageSnapshot,restoreSnapshot,download,tracedExport,projectJSON,importProject,importTextFiles};
+ return {project,renderProjectSelector,revokeBinaryAssetURL,renderBinaryAssets,importBinaryAssets,removeBinaryAsset,projectZip,renderFiles,renderGutter,editFile,q04SyncButtons,q04PreviewEdit,q04AcceptEdit,q04RollbackEdit,createProject,renameProject,deleteProject,newFile,renameFile,copyFolder,moveFolder,deleteFile,snapshot,selectedSnapshot,renderSnapshotActions,manageSnapshot,restoreSnapshot,download,tracedExport,projectJSON,importProject,importGitHubRepo,importTextFiles};
 }

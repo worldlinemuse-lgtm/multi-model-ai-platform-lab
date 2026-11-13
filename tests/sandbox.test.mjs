@@ -1,4 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {runnerDocument,previewDocument,previewReport} from '../src/sandbox.js';
+import {binaryRecord} from '../src/binary-assets.js';
+const PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==';
+const pngRecord=()=>binaryRecord('icon.png',Buffer.from(PNG_B64,'base64'));
+const wavBytes=()=>{const b=new Uint8Array(16);b.set([82,73,70,70,0,0,0,0,87,65,86,69,0,0,0,0]);return b;};
+const mp3Bytes=()=>new Uint8Array([0x49,0x44,0x33,0,0,0,0,0]);
 test('JS document never grants same-origin, CSP blocks network',()=>{const src=runnerDocument('console.log("ok")','javascript','random-nonce');assert.match(src,/worker-src blob:/);assert.match(src,/connect-src 'none'/);assert.match(src,/mm-sandbox-b03/);assert.ok(!src.includes('allow-same-origin'));const script=src.match(/<script>([\s\S]+?)<\/script>/)?.[1];assert.ok(script);assert.doesNotThrow(()=>new vm.Script(script));});
 test('JS runner serializes markup-breaking code safely',()=>{const src=runnerDocument('console.log("</script><script>bad</script>")','javascript','nonce');assert.equal((src.match(/<script>/g)||[]).length,1);assert.equal((src.match(/<\/script>/g)||[]).length,1);});
 test('Python loads an isolated CDN WASM runtime on demand',()=>{const src=runnerDocument('print(42)','python','nonce');assert.match(src,/cdn.jsdelivr.net/);assert.match(src,/worker-src blob:/);assert.match(src,/Pyodide/);});
@@ -46,5 +51,65 @@ test('P04: escape closing tags inside local scripts and CSS',()=>{
  assert.equal((html.match(/<\/script>/g)||[]).length,1,'script injection must not close the inline script');
  assert.equal((html.match(/<\/style>/g)||[]).length,1,'style injection must not close the inline style');
  assert.match(html,/script-src 'unsafe-inline'/);
+ assert.match(html,/connect-src 'none'/);
+});
+
+// Stage A: full-asset preview — local media refs become data URIs, never network loads.
+test('Stage A: img src rewrites to a data URI with the right MIME from binary assets',()=>{
+ const files={'index.html':'<img src="icon.png" alt="icon">'};
+ const out=previewReport(files,'index.html',{'icon.png':pngRecord()});
+ assert.deepEqual(out.warnings,[]);
+ assert.match(out.document,/src="data:image\/png;base64,iVBORw0KGgo/);
+ assert.ok(!out.document.includes('src="icon.png"'));
+});
+test('Stage A: missing image warns by name and leaves no broken reference',()=>{
+ const files={'index.html':'<img src="gone.png" alt="gone"><p>after</p>'};
+ const out=previewReport(files,'index.html',{});
+ assert.equal(out.warnings.length,1);
+ assert.match(out.warnings[0],/gone\.png/);
+ assert.ok(!out.document.includes('gone.png'),'missing ref must not survive in the document');
+ assert.match(out.document,/<img[^>]*alt="gone"/);
+ assert.ok(!out.document.includes('src='),'stripped img must carry no src at all');
+});
+test('Stage A: audio, video poster and source elements rewrite from binary assets',()=>{
+ const files={'index.html':'<audio src="sfx.wav" controls></audio><video poster="icon.png"><source src="song.mp3"></video>'};
+ const assets={'sfx.wav':binaryRecord('sfx.wav',wavBytes()),'song.mp3':binaryRecord('song.mp3',mp3Bytes()),'icon.png':pngRecord()};
+ const out=previewReport(files,'index.html',assets);
+ assert.deepEqual(out.warnings,[]);
+ assert.match(out.document,/audio[^>]*src="data:audio\/wav;base64,/);
+ assert.match(out.document,/video[^>]*poster="data:image\/png;base64,/);
+ assert.match(out.document,/source[^>]*src="data:audio\/mpeg;base64,/);
+});
+test('Stage A: CSS url() rewrites to data URIs; a missing CSS image warns by name and becomes none',()=>{
+ const files={'index.html':'<link rel="stylesheet" href="style.css">','style.css':'.a{background-image:url(icon.png)}.b{background-image:url("gone.png")}'};
+ const out=previewReport(files,'index.html',{'icon.png':pngRecord()});
+ assert.equal(out.warnings.length,1);
+ assert.match(out.warnings[0],/gone\.png/);
+ assert.match(out.document,/url\("data:image\/png;base64,/);
+ assert.match(out.document,/\.b\{background-image:none\}/);
+ assert.ok(!out.document.includes('gone.png'));
+});
+test('Stage A: external and traversal media refs are blocked, warned and stripped',()=>{
+ const files={'index.html':'<img src="https://evil.example/x.png"><img src="../escape.png"><img src="data:image/png;base64,AAA">'};
+ const out=previewReport(files,'index.html',{'escape.png':pngRecord()});
+ assert.equal(out.warnings.length,2);
+ assert.match(out.warnings.join(' | '),/external reference blocked/);
+ assert.match(out.warnings.join(' | '),/outside project root/);
+ assert.ok(!out.document.includes('evil.example'));
+ assert.ok(!out.document.includes('escape.png'));
+ assert.match(out.document,/src="data:image\/png;base64,AAA"/,'inline data: URIs pass through untouched');
+});
+test('Stage A: text SVG falls back to a data URI; non-media text files are refused by name',()=>{
+ const files={'index.html':'<img src="logo.svg"><img src="notes.txt">','logo.svg':'<svg xmlns="http://www.w3.org/2000/svg"></svg>','notes.txt':'hello'};
+ const out=previewReport(files,'index.html',{});
+ assert.equal(out.warnings.length,1);
+ assert.match(out.warnings[0],/notes\.txt/);
+ assert.match(out.document,/src="data:image\/svg\+xml;base64,/);
+ assert.ok(!out.document.includes('notes.txt'));
+});
+test('Stage A: preview CSP allows data: media so rewritten audio/video can actually play',()=>{
+ const html=previewDocument({'index.html':'<audio src="s.mp3"></audio>'},'index.html');
+ assert.match(html,/media-src data: blob:/);
+ assert.match(html,/img-src data: blob:/);
  assert.match(html,/connect-src 'none'/);
 });
