@@ -89,7 +89,7 @@ const idField = v => textField(v,140) && v.length > 0;
 const uniqueIds = items => new Set(items.map(x=>x.id)).size === items.length;
 function validProject(p){return record(p) && idField(p.id) && textField(p.name,100) && idField(p.active) && safeFiles(p.files) && Object.hasOwn(p.files,p.active) && textField(p.updated,80) && (p.binaryAssets===undefined||validateBinaryAssets(p.binaryAssets,p.files));}
 function validSnapshot(s){return record(s) && idField(s.id) && textField(s.at,80) && textField(s.label,60) && (s.pinned===undefined||typeof s.pinned==='boolean') && validProject(s.project);}
-function validMessage(m){return record(m) && ['user','assistant','system'].includes(m.role) && textField(m.content,60000) && (m.provider===undefined||textField(m.provider,140)) && (m.model===undefined||textField(m.model,140)) && (m.error===undefined||typeof m.error==='boolean') && (m.at===undefined||textField(m.at,80));}
+function validMessage(m){return record(m) && ['user','assistant','system'].includes(m.role) && textField(m.content,60000) && (m.provider===undefined||textField(m.provider,140)) && (m.model===undefined||textField(m.model,140)) && (m.error===undefined||typeof m.error==='boolean') && (m.agentTool===undefined||typeof m.agentTool==='boolean') && (m.at===undefined||textField(m.at,80));}
 function validThread(t){return record(t) && idField(t.id) && textField(t.title,300) && textField(t.created,80) && Array.isArray(t.messages) && t.messages.length<=150 && t.messages.every(validMessage);}
 function validNote(n){return record(n) && idField(n.id) && textField(n.title,150) && textField(n.content,100000) && textField(n.created,80) && (n.updated===undefined||textField(n.updated,80));}
 const validTokens = v => v===null || (Number.isSafeInteger(v) && v>=0);
@@ -109,7 +109,7 @@ export function validateState(s){
  return record(s.preferences) && ['cyan','violet','amber'].includes(s.preferences.accent) && typeof s.preferences.compact==='boolean' && (s.preferences.maxOutputTokens===undefined||[128,256,512,1024].includes(s.preferences.maxOutputTokens)) && (s.preferences.providerPresets===undefined||validateProviderPresets(s.preferences.providerPresets));
 }
 export function historyForRoute(messages,route){
- return messages.filter(m=>m && (m.role==='user'||(m.role==='assistant'&&m.provider===route&&!m.error)))
+ return messages.filter(m=>m && !m.agentTool && (m.role==='user'||(m.role==='assistant'&&m.provider===route&&!m.error)))
   .slice(-10).map(m=>({role:m.role,content:m.content}));
 }
 export function migrateLegacy(source){if(!source||!safeFiles(source.files)||!Object.hasOwn(source.files,source.active))throw Error('Cannot migrate invalid legacy project');const state=freshState();const migratedFiles=clone(source.files);if(!migratedFiles)throw Error('Cannot migrate: legacy file data is not serializable');state.projects[0].files=migratedFiles;state.projects[0].active=source.active;state.projects[0].name='Recovered B0.2 project';return state;}

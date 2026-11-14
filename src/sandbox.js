@@ -1,12 +1,10 @@
 /* Every submitted code program runs in a disposable worker created by an opaque-origin sandboxed iframe.
    Parent documents and encrypted key material are unavailable to the sandbox. */
 import {moduleRunnerDocument,shouldRunAsModule} from './module-runtime.js';
+import {workerPrelude,frameSubtleRelay} from './sandbox-prelude.js';
 const escapeScript=s=>JSON.stringify(String(s)).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026');
-const JAVASCRIPT_WORKER=String.raw`
-const send=(type,message)=>self.postMessage({type,message:String(message).slice(0,10000)});
-const format=x=>{try{return typeof x==='string'?x:JSON.stringify(x)??String(x)}catch{return String(x)}};
-const logs={log:(...a)=>send('log',a.map(format).join(' ')),info:(...a)=>send('log',a.map(format).join(' ')),warn:(...a)=>send('log','WARN: '+a.map(format).join(' ')),error:(...a)=>send('log','ERROR: '+a.map(format).join(' '))};
-self.onmessage=async({data})=>{try{const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;await new AsyncFunction('console','print','"use strict";\n'+data.code)(logs,...[logs.log]);send('done','Execution complete.')}catch(e){send('error',e?.stack||String(e))}};
+const JAVASCRIPT_WORKER=workerPrelude()+String.raw`
+self.onmessage=async({data})=>{if(data&&data.subtleReply){__mmSubtleReply(data.subtleReply);return;}try{const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;await new AsyncFunction('console','print','"use strict";\n'+data.code)(logs,...[logs.log]);if(await __mmDrain())send('done','Execution complete.')}catch(e){__mmFail('',e)}};
 `;
 const PYTHON_WORKER=String.raw`
 const CD='https://cdn.jsdelivr.net/pyodide/v0.28.3/full/';
@@ -16,9 +14,9 @@ self.onmessage=async({data})=>{try{send('log','Downloading Python WebAssembly ru
 export function runnerDocument(code,lang,nonce){const js=lang==='python'?PYTHON_WORKER:JAVASCRIPT_WORKER;
  const csp=lang==='python'?"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; connect-src https://cdn.jsdelivr.net; form-action 'none'; base-uri 'none'":"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'";
  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"></head><body><script>
-(()=>{const nonce=${escapeScript(nonce)};const code=${escapeScript(code)};const source=${escapeScript(js)};const url=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));let worker;
+(()=>{${frameSubtleRelay()}const nonce=${escapeScript(nonce)};const code=${escapeScript(code)};const source=${escapeScript(js)};const url=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));let worker;
 const send=(type,message)=>parent.postMessage({channel:'mm-sandbox-b03',nonce,type,message:String(message)},'*');
-try{worker=new Worker(url);URL.revokeObjectURL(url);worker.onmessage=e=>send(e.data.type,e.data.message);worker.onerror=e=>send('error',e.message||'Worker error');worker.postMessage({code});}catch(e){send('error','Unable to start isolated Worker: '+String(e))}
+try{worker=new Worker(url);URL.revokeObjectURL(url);worker.onmessage=e=>{if(__mmRelay(worker,e.data))return;send(e.data.type,e.data.message)};worker.onerror=e=>send('error',e.message||'Worker error');worker.postMessage({code});}catch(e){send('error','Unable to start isolated Worker: '+String(e))}
 window.addEventListener('message',e=>{if(e.source===parent&&e.data?.channel==='mm-stop-b03'&&e.data.nonce===nonce){worker?.terminate();send('stopped','Execution stopped.')}});
 })();
 <\/script></body></html>`;}

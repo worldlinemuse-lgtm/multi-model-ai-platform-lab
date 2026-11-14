@@ -396,6 +396,147 @@ def check_chat(p):
     approve(p)
     p.locator('#clear-audit').click()
     verify(p.locator('#usage-total').inner_text()=='0','Clear audit failed')
+AGENT_CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Authorization, Content-Type, Accept','Access-Control-Allow-Methods':'POST,OPTIONS'}
+AGENT_SANDBOX_JS=r"""async (withPython)=>{
+ const {runInSandbox}=await import('./src/agent-executor.js');
+ const {RuntimeRunner}=await import('./src/sandbox.js');
+ const out={};
+ out.timer=await runInSandbox("console.log('start');setTimeout(()=>console.log('late timer'),50);",'javascript');
+ out.asyncNotAwaited=await runInSandbox("(async()=>{await new Promise(r=>setTimeout(r,30));console.log('async tail')})();",'javascript');
+ out.rejection=await runInSandbox("Promise.reject(new Error('kaboom'));console.log('before');",'javascript');
+ out.timerThrow=await runInSandbox("setTimeout(()=>{throw new Error('in timer')},10);",'javascript');
+ out.subtle=await runInSandbox("const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('abc'));console.log([...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''));const k=await crypto.subtle.generateKey({name:'HMAC',hash:'SHA-256'},true,['sign','verify']);const sig=await crypto.subtle.sign('HMAC',k,new TextEncoder().encode('m'));console.log('hmac-ok',await crypto.subtle.verify('HMAC',k,sig,new TextEncoder().encode('m')));",'javascript');
+ out.subtleBadAlgo=await runInSandbox("try{await crypto.subtle.digest('NOPE',new Uint8Array(1))}catch(e){console.log('caught',e.name)}",'javascript');
+ out.clearedInterval=await runInSandbox("let n=0;const id=setInterval(()=>{n++;if(n===3){clearInterval(id);console.log('ticks',n)}},10);",'javascript');
+ out.endlessInterval=await runInSandbox("setInterval(()=>{},50);console.log('spinning');",'javascript',{limitMs:1500});
+ out.syntax=await runInSandbox("this is not js",'javascript');
+ out.isolation=await runInSandbox("let r=[];try{await fetch('https://example.com');r.push('fetch-allowed')}catch(e){r.push('fetch-blocked')}r.push(typeof document,typeof localStorage);try{const q=indexedDB.open('probe');await new Promise((a,b)=>{q.onsuccess=a;q.onerror=()=>b(q.error)});r.push('idb-open')}catch(e){r.push('idb-blocked')}console.log(r.join(','))",'javascript');
+ // Q03 module runner path with the same prelude
+ out.module=await new Promise(resolve=>{const lines=[];const r=new RuntimeRunner(document.body,()=>{});r.onStop=x=>resolve({status:'stop:'+x,lines});
+  const project={entry:'main.js',files:{'main.js':"import v from './a.js';\nsetTimeout(()=>console.log('module late',v),40);const d=await crypto.subtle.digest('SHA-256',new Uint8Array([1]));console.log('module subtle',d.byteLength);",'a.js':'export default 7;'}};
+  r.run(project.files['main.js'],'javascript',(t,m)=>{if(t==='log')lines.push(m);if(t==='done'||t==='error')resolve({status:t,lines,message:m});},8000,project);});
+ out.moduleRejection=await new Promise(resolve=>{const r=new RuntimeRunner(document.body,()=>{});r.onStop=x=>resolve({status:'stop:'+x});
+  const project={entry:'main.js',files:{'main.js':"export const x=1;\nPromise.reject(new Error('mod reject'));"}};
+  r.run(project.files['main.js'],'javascript',(t,m)=>{if(t==='done'||t==='error')resolve({status:t,message:m});},8000,project);});
+ if(withPython)out.python=await runInSandbox("import hashlib\nprint(sum(range(10)))\nhashlib.sha256(b'abc').hexdigest()[:8]",'python');
+ return out;
+}"""
+class AgentFakeGroq:
+    """Scripted model for the agent loop. Each entry: (assert_fn(body), reply_message_dict)."""
+    def __init__(self):self.script=[];self.bodies=[];self.errors=[]
+    def handle(self,route):
+        req=route.request
+        if req.method=='OPTIONS':return route.fulfill(status=204,headers=AGENT_CORS)
+        body=json.loads(req.post_data or '{}');self.bodies.append(body)
+        if not self.script:
+            self.errors.append('unexpected request');return route.fulfill(status=500,headers=AGENT_CORS,body='{}')
+        check,msg=self.script.pop(0)
+        try:check(body)
+        except AssertionError as e:self.errors.append('check failed: %r'%(e,))
+        payload={'id':'x','model':'llama-3.1-8b-instant','choices':[{'index':0,'finish_reason':'tool_calls' if msg.get('tool_calls') else 'stop','message':{'role':'assistant',**msg}}],'usage':{'prompt_tokens':100,'completion_tokens':20,'total_tokens':120}}
+        route.fulfill(status=200,headers={**AGENT_CORS,'Content-Type':'application/json'},body=json.dumps(payload))
+def agent_call(id,name,args):return {'id':id,'type':'function','function':{'name':name,'arguments':json.dumps(args)}}
+def agent_tool_result(body,id):
+    for m in body['messages']:
+        if m.get('role')=='tool' and m.get('tool_call_id')==id:return json.loads(m['content'])
+    raise AssertionError('no tool result for '+id)
+def check_agent_sandbox(p):
+    o=p.evaluate(AGENT_SANDBOX_JS,False)
+    verify(o['timer']['status']=='ok' and o['timer']['output']=='start\nlate timer','Agent sandbox: late timer output dropped')
+    verify(o['asyncNotAwaited']['status']=='ok' and 'async tail' in o['asyncNotAwaited']['output'],'Agent sandbox: unawaited async tail dropped')
+    verify(o['rejection']['status']=='error' and 'Unhandled promise rejection' in o['rejection']['error'] and 'kaboom' in o['rejection']['error'],'Agent sandbox: unhandled rejection not reported')
+    verify(o['timerThrow']['status']=='error' and 'in timer' in o['timerThrow']['error'],'Agent sandbox: error inside timer not reported')
+    verify(o['subtle']['status']=='ok' and 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' in o['subtle']['output'] and 'hmac-ok true' in o['subtle']['output'],'Agent sandbox: crypto.subtle relay failed')
+    verify(o['subtleBadAlgo']['status']=='ok' and 'caught NotSupportedError' in o['subtleBadAlgo']['output'],'Agent sandbox: bad subtle algorithm not caught')
+    verify(o['clearedInterval']['status']=='ok' and 'ticks 3' in o['clearedInterval']['output'],'Agent sandbox: cleared interval not drained')
+    verify(o['endlessInterval']['status']=='timeout' and 'spinning' in o['endlessInterval']['output'],'Agent sandbox: endless interval did not time out')
+    verify(o['syntax']['status']=='error','Agent sandbox: syntax error not reported')
+    verify(o['isolation']['status']=='ok' and o['isolation']['output']=='fetch-blocked,undefined,undefined,idb-blocked','Agent sandbox: isolation broken: '+o['isolation'].get('output',''))
+    verify(o['module']['status']=='done' and o['module']['lines']==['module subtle 32','module late 7'],'Agent sandbox: module runner prelude failed: '+str(o['module']))
+    verify(o['moduleRejection']['status']=='error' and 'mod reject' in o['moduleRejection']['message'],'Agent sandbox: module rejection not reported')
+def check_agent_bridge(p):
+    p.wait_for_function("document.documentElement.dataset.mmBoot==='ready'",timeout=20000)
+    check_agent_sandbox(p)
+    mock_provider(p)
+    setup_vault(p)
+    screen(p,'chat')
+    p.locator('#chat-route').select_option('groq')
+    p.locator('#chat-output-tokens').select_option('1024')
+    fake=AgentFakeGroq()
+    p.route('https://api.groq.com/**',fake.handle)
+    # --- Run 1: plain chat with agent OFF stays on the legacy path (no tools in request)
+    fake.script.append((lambda b:verify('tools' not in b,'Agent tools sent while agent off'),{'content':'plain hello'}))
+    p.locator('#chat-input').fill('hello');p.locator('#send-chat').click()
+    p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('plain hello')",timeout=15000)
+    # --- Run 2: full loop with approvals
+    p.locator('#agent-mode').check()
+    def c1(b):
+        names=sorted(t['function']['name'] for t in b['tools'])
+        assert names==['list_files','propose_edit','read_file','run_javascript','run_python'],names
+        assert b['tool_choice']=='auto'
+        assert 'Multi-Model Studio' in b['messages'][0]['content']
+    fake.script.append((c1,{'content':None,'tool_calls':[agent_call('c1','run_javascript',{'code':"let s=0;for(let i=1;i<=100;i++)s+=i;setTimeout(()=>console.log('sum',s),20);"})]}))
+    def c2(b):
+        r=agent_tool_result(b,'c1');assert r['status']=='ok' and r['output']=='sum 5050',r
+        a=[m for m in b['messages'] if m.get('tool_calls')][0];assert a['tool_calls'][0]['id']=='c1'
+    fake.script.append((c2,{'content':None,'tool_calls':[agent_call('c2','propose_edit',{'name':'agent-note.txt','content':'sum=5050\n'}),agent_call('c3','read_file',{'name':'../../secret'})]}))
+    def c3(b):
+        r=agent_tool_result(b,'c2');assert r.get('applied') is True and r.get('created') is True,r
+        r=agent_tool_result(b,'c3');assert r['error']=='invalid_arguments',r
+    fake.script.append((c3,{'content':None,'tool_calls':[agent_call('c4','read_file',{'name':'agent-note.txt'}),agent_call('c5','list_files',{})]}))
+    def c4(b):
+        r=agent_tool_result(b,'c4');assert r['content']=='sum=5050\n',r
+        r=agent_tool_result(b,'c5');assert any(f['name']=='agent-note.txt' for f in r['files']),r
+    fake.script.append((c4,{'content':'Done: the sum is 5050 and I saved it to agent-note.txt.'}))
+    p.locator('#chat-input').fill('Add 1..100 using the sandbox and save the result.');p.locator('#send-chat').click()
+    p.wait_for_selector('#agent-approval:not([hidden])',timeout=15000)
+    verify('run javascript' in p.locator('#agent-approval-title').inner_text(),'Agent approval did not name the JS run')
+    verify('for(let i=1' in p.locator('#agent-approval-body').inner_text(),'Agent approval did not show the code')
+    verify(p.locator('#agent-status').get_attribute('data-state')=='approval','Agent status did not enter approval state')
+    p.locator('#agent-approve').click()
+    p.wait_for_function("document.querySelector('#agent-approval-title').textContent.includes('propose edit')&&!document.querySelector('#agent-approval').hidden",timeout=15000)
+    body=p.locator('#agent-approval-body').inner_text()
+    verify('Create agent-note.txt' in body and 'sum=5050' in body,'Agent approval did not show the edit diff: '+body[:200])
+    p.locator('#agent-approve').click()
+    p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('Done: the sum is 5050')",timeout=20000)
+    msgs=p.locator('#chat-messages').inner_text()
+    verify('run_javascript — ok' in msgs and 'sum 5050' in msgs,'Agent TOOL bubbles missing the JS run')
+    verify('propose_edit — ok' in msgs and 'read_file — invalid' in msgs,'Agent TOOL bubbles missing the edit/invalid results')
+    verify('Agent final' in p.locator('#agent-status').inner_text(),'Agent status did not reach final')
+    trace=p.evaluate('window.__mmAgent.trace()')
+    decisions=[(t['tool'],t['decision']) for t in trace if t['kind']=='approval-decision']
+    verify(decisions==[('run_javascript','approved'),('propose_edit','approved'),('read_file','auto'),('list_files','auto')],'Agent approval trace mismatch: '+str(decisions))
+    verify('TEST-FAKE-NOT-A-REAL-API-KEY' not in json.dumps(trace),'Agent trace leaked the test key')
+    # --- Run 3: denial + auto-run + stop
+    fake.script.append((lambda b:None,{'content':None,'tool_calls':[agent_call('d1','propose_edit',{'name':'agent-note.txt','content':'overwritten\n'})]}))
+    def d2(b):
+        r=agent_tool_result(b,'d1');assert r['error']=='denied',r
+        assert not any(m.get('content','').startswith('run_javascript') for m in b['messages'] if m['role']=='user'),'tool bubbles leaked into history as user text'
+    fake.script.append((d2,{'content':None,'tool_calls':[agent_call('d3','run_javascript',{'code':"console.log(typeof crypto.subtle.digest)"})]}))
+    p.locator('#agent-auto-run').check()
+    def d4(b):
+        r=agent_tool_result(b,'d3');assert r['output']=='function',r
+    fake.script.append((d4,{'content':'Understood, I left the file unchanged.'}))
+    p.locator('#chat-input').fill('Overwrite the note.');p.locator('#send-chat').click()
+    p.wait_for_selector('#agent-approval:not([hidden])',timeout=15000)
+    p.locator('#agent-deny').click()
+    p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('left the file unchanged')",timeout=20000)
+    # file still original: ask a read through one more scripted run
+    fake.script.append((lambda b:None,{'content':None,'tool_calls':[agent_call('r1','read_file',{'name':'agent-note.txt'})]}))
+    fake.script.append((lambda b:verify(agent_tool_result(b,'r1')['content']=='sum=5050\n','file was changed after denial'),{'content':'still 5050'}))
+    p.locator('#chat-input').fill('Check the note.');p.locator('#send-chat').click()
+    p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('still 5050')",timeout=20000)
+    # Stop during an approval wait
+    p.locator('#agent-auto-run').uncheck()
+    fake.script.append((lambda b:None,{'content':None,'tool_calls':[agent_call('s1','run_javascript',{'code':'console.log(1)'})]}))
+    p.locator('#chat-input').fill('Run something.');p.locator('#send-chat').click()
+    p.wait_for_selector('#agent-approval:not([hidden])',timeout=15000)
+    p.locator('#stop-chat').click()
+    p.wait_for_function("document.querySelector('#chat-messages').textContent.includes('[Agent run stopped.]')",timeout=15000)
+    verify(p.locator('#agent-approval').is_hidden(),'Agent approval box stayed open after stop')
+    p.wait_for_function("!document.querySelector('#send-chat').disabled",timeout=10000)
+    verify(not fake.errors,'Agent fake Groq errors: '+str(fake.errors))
+    verify(not fake.script,'Agent fake Groq has unused scripted replies: %d'%len(fake.script))
 def check_chat_retry_no_duplicate(p):
     setup_vault(p)
     screen(p,'chat')
@@ -1571,6 +1712,7 @@ CASES=[
  ('Q21 encrypted vault export/import and passphrase rotation',check_vault_portability),
  ('Vault mutations commit before adoption under storage failure',check_vault_commit_before_adopt),
  ('Mocked API adapter through chat, history, audit and export',check_chat),
+ ('Agent tool bridge: sandbox prelude and mocked Groq agent loop',check_agent_bridge),
  ('Failed and stopped chat requests do not restore the prompt or duplicate the message',check_chat_retry_no_duplicate),
  ('Chat prompt persists before provider dispatch, compare send, failed-save gate',check_chat_persist_before_dispatch),
  ('Chat double submit during save is guarded, failed save rolls back exactly',check_chat_double_submit_guard),

@@ -89,8 +89,11 @@ const chat=createChat({
  metrics:workshopMetrics,
  vault,selectView,
  routeChoices:()=>providers.routeChoices(),
- download,callProvider,isDurableStorage
+ download,callProvider,isDurableStorage,
+ renderFiles:()=>renderFiles()
 });
+// Read-only debug hook for local automation (Simone bridge): agent trace has code/results, never keys.
+window.__mmAgent=Object.freeze({trace:()=>chat.agentTrace()});
 // Stage 4b group 7: the remaining views live in workbench.js. wire() and
 // boot() stay here — they are the app entry and assembly.
 const workbench=createWorkbench({

@@ -20,10 +20,10 @@ with sync_playwright() as p:
         page.on('console',lambda msg:print('Q03_DIAG console_error',msg.text[:500],flush=True) if msg.type=='error' else None)
         page.set_content('<!doctype html><meta charset=\"utf-8\"><body></body>')
         scripts=[]
-        for name,path,return_names in [('graph','src/module-graph.js','compileModuleGraph'),('linker','src/module-linker.js','linkModuleGraph,rewrite,linkerWorkerSource'),('runtime','src/module-runtime.js','moduleRunnerDocument,shouldRunAsModule')]:
+        for name,path,return_names in [('prelude','src/sandbox-prelude.js','workerPrelude,frameSubtleRelay'),('graph','src/module-graph.js','compileModuleGraph'),('linker','src/module-linker.js','linkModuleGraph,rewrite,linkerWorkerSource'),('runtime','src/module-runtime.js','moduleRunnerDocument,shouldRunAsModule')]:
             source=(ROOT/path).read_text()
-            source=source.replace("import {compileModuleGraph} from './module-graph.js';",'').replace("import {linkerWorkerSource} from './module-linker.js';",'').replace('export function ','function ')
-            bindings=('const {compileModuleGraph}=graph;const {linkerWorkerSource}=linker;' if name=='runtime' else '')
+            source=source.replace("import {compileModuleGraph} from './module-graph.js';",'').replace("import {linkerWorkerSource} from './module-linker.js';",'').replace("import {workerPrelude,frameSubtleRelay} from './sandbox-prelude.js';",'').replace('export const ','const ').replace('export function ','function ')
+            bindings=('const {compileModuleGraph}=graph;const {linkerWorkerSource}=linker;const {workerPrelude,frameSubtleRelay}=prelude;' if name=='runtime' else '')
             scripts.append('const '+name+'=(()=>{'+bindings+'\n'+source+'\nreturn {'+return_names+'};})();')
         scripts.append('const {moduleRunnerDocument}=runtime;')
         scripts.append("window.q03Ready=true;window.startQ03=(files,entry)=>{window.q03Messages=[];window.q03Frame?.remove();const frame=document.createElement('iframe');frame.setAttribute('sandbox','allow-scripts');frame.hidden=true;const nonce='test-nonce-'+Date.now();frame.srcdoc=moduleRunnerDocument(files,entry,nonce);window.q03Frame=frame;window.q03Nonce=nonce;window.addEventListener('message',function listener(e){if(e.source!==frame.contentWindow||e.data?.nonce!==nonce||e.data?.channel!=='mm-sandbox-b03')return;window.q03Messages.push(e.data);if(['done','error'].includes(e.data.type))window.removeEventListener('message',listener);});document.body.appendChild(frame);};")
